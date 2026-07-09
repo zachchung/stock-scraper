@@ -15,21 +15,21 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
  [ Local RAM / Memory ]
         │
         ▼ (2) Saves directly to your SSD
- ┌───────────────────────────────────────────────────────┐
- │  YOUR MAC STORAGE                                     │
- │                                                        │
- │  /Users/chunluk/warehouse/                             │
- │   └── [ Parquet Data Files & Iceberg Logs ]  ◄──┐      │
- └──────────────────────────────────────────────────│──────┘
-                                                     │
- ┌──────────────────────────────────────────────────│──────┐
- │  DOCKER RUNTIME                                  │      │
- │  ┌───────────────────────────────────────────┐   │      │
- │  │ FastMCP Container                         │   │      │
- │  │ - Bundles DuckDB engine                   │───┘      │
- │  │ - Mounts /warehouse folder read-only      │ (3) Scans files
- │  └───────────────────────────────────────────┘          │
- └────────────────────────▲────────────────────────────────┘
+ ┌──────────────────────────────────────────────────────┐
+ │  YOUR MAC STORAGE                                    │
+ │                                                       │
+ │  ~/warehouse/                                         │
+ │   └── [ Parquet Data Files & Iceberg Logs ]  ◄──┐     │
+ └─────────────────────────────────────────────────│─────┘
+                                                    │
+ ┌─────────────────────────────────────────────────│─────┐
+ │  DOCKER RUNTIME                                 │      │
+ │  ┌──────────────────────────────────────────┐   │      │
+ │  │ FastMCP Container                        │   │      │
+ │  │ - Bundles DuckDB engine                  │───┘      │
+ │  │ - Mounts /warehouse folder read-only     │ (3) Scans│
+ │  └──────────────────────────────────────────┘          │
+ └───────────────────────▲────────────────────────────────┘
                           │
                           │ (4) Stdio stream
  ┌────────────────────────┴───────────────────────────────┐
@@ -49,7 +49,7 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 
 ### Data Flow
 
-1. A Python/PySpark script fetches OHLCV data from a public web API (e.g., Yahoo Finance, Alpha Vantage, or Twelve Data).
+1. A Python/PySpark script fetches OHLCV data from **yfinance** (Yahoo Finance) or **investing.com**.
 2. Data is processed in-memory on your Mac then persisted to SSD as Apache Iceberg tables backed by Parquet files.
 3. A Docker container runs a FastMCP server that bundles DuckDB. The `/warehouse` directory is mounted read-only so DuckDB can query the Parquet/Iceberg files directly without copying.
 4. Claude Desktop connects to the FastMCP server via stdio and issues natural-language trading queries.
@@ -63,11 +63,15 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 Create a Python script (`scraper.py`) that:
 
 - Pulls daily OHLCV data for a configurable list of US stock tickers
+- Data sources: **yfinance** (Yahoo Finance) and **investing.com**
 - Uses PySpark for distributed (or local) processing and transformation
 - Handles incremental updates (append new data without duplicating existing records)
 - Validates data quality (no gaps, correct types)
 
-**Output**: Parquet files organized as an Iceberg table under `~//warehouse/stocks/`.
+**Phase 1**: Daily OHLCV only.  
+**Phase 2** (if needed): Hourly OHLCV for intraday analysis.
+
+**Output**: Parquet files organized as an Iceberg table under `~/warehouse/stocks/`.
 
 ### Step 2: Warehouse Initialization
 
@@ -123,6 +127,71 @@ Once the MCP server is running, Claude Desktop can answer:
 
 ---
 
+## Installation
+
+### 1. Java JDK
+
+PySpark runs on the JVM. Install OpenJDK 17 via Homebrew:
+
+```bash
+brew install openjdk@17
+```
+
+Add to your shell config (`~/.zshrc`):
+
+```bash
+export JAVA_HOME=/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+```
+
+### 2. Python + PySpark + Iceberg
+
+```bash
+# Create virtual environment
+python -m venv .venv && source .venv/bin/activate
+
+# Install PySpark (bundles Spark binaries)
+pip install pyspark
+
+# Install Iceberg — you'll need the Spark runtime jar:
+# Download from https://iceberg.apache.org/releases/
+# Then add it to your Spark session config:
+#   spark.jars = /path/to/iceberg-spark-runtime-3.5_2.12-1.6.0.jar
+```
+
+### 3. Docker Desktop
+
+```bash
+brew install --cask docker
+```
+
+Docker is used only for the MCP server container. The scraper runs natively on your Mac.
+
+### 4. DuckDB (bundled in the Docker image)
+
+No local install needed — DuckDB lives inside the FastMCP container.
+
+---
+
+## Resource Usage
+
+Approximate disk footprint:
+
+| Component | Size |
+|-----------|------|
+| OpenJDK 17 (`brew install openjdk@17`) | ~350 MB |
+| PySpark (`pip install pyspark`) | ~250 MB |
+| Iceberg Spark runtime jar | ~80 MB |
+| Docker Desktop (app + Linux VM) | ~2–3 GB |
+| **Total** | **~3–3.5 GB** |
+
+### Other concerns
+
+- **Cold start**: PySpark/Java takes ~15–30s to spin up for each scraper run. Since the scraper runs once a day (or on demand), this is negligible.
+- **Docker background VM**: Uses ~1–2 GB RAM and some CPU — fine on any modern Mac.
+- **Iceberg metadata**: Creates small extra files per table; overhead is < 1 MB.
+
+---
+
 ## Development Setup
 
 ```bash
@@ -146,10 +215,24 @@ docker build -t stock-scraper-mcp -f Dockerfile.mcp .
 ## Requirements
 
 - Python 3.11+
+- OpenJDK 17
 - PySpark (runs natively on Mac — no cluster needed)
-- Docker Desktop (for FastMCP container)
 - Apache Iceberg + Parquet (via PySpark)
+- Docker Desktop (for FastMCP container)
 - DuckDB (bundled in container)
+
+---
+
+## What You'll Learn
+
+- **Distributed data processing concepts** — PySpark DataFrames, partitioning, lazy evaluation
+- **Open table formats** — Apache Iceberg catalogs, snapshots, time-travel queries
+- **Columnar storage** — Parquet file format, compression, predicate pushdown
+- **Local analytics** — DuckDB querying Parquet/Iceberg files directly
+- **MCP protocol** — stdio-based server design, tool/resource/prompt exposure
+- **Docker packaging** — containerizing a Python app, read-only volume mounts
+
+This project touches the modern data stack — Spark → Iceberg → Parquet → DuckDB — all on a single Mac. Solid portfolio material.
 
 ---
 
