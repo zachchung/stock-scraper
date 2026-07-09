@@ -62,7 +62,7 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 
 Create a Python script (`scraper.py`) that:
 
-- Pulls daily OHLCV data for a configurable list of US stock tickers
+- Scrapes daily OHLCV for **all S&P 500 constituents** + **VOO**
 - Data sources: **yfinance** (Yahoo Finance) and **investing.com**
 - Uses PySpark for distributed (or local) processing and transformation
 - Handles incremental updates (append new data without duplicating existing records)
@@ -122,8 +122,13 @@ Once the MCP server is running, Claude Desktop can answer:
 
 - "What is the average daily range for AAPL over the last 6 months?"
 - "Find the best range to trade TSLA with an entry within 20% of the current price to maximize completed trades over the last 3 years."
-- "Which stocks in the S&P 500 have the highest volatility this quarter?"
-- "Show me SPY OHLCV for the last 30 trading days."
+
+- "List all recent drawdowns of MU in the last 3 years." (drawdown risk)
+- "Rank months based on VOO performance." (time-period analysis)
+- "When MU opens down 10%, does it normally extend losses intraday or recover? Show percentage of each."
+- "After Amazon earnings beat, does the price momentum follow and for how many days?"
+- "What is the historical daily P/E ratio for this stock?"
+- "If today's volume of MU > 134% of the 10-day average volume, buy at market close and sell 2 trading days after — what's the average P/L of this strategy?"
 
 ---
 
