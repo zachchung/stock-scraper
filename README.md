@@ -105,9 +105,8 @@ Edit `claude_desktop_config.json` to register the MCP server:
 
 Once the MCP server is running, Claude Desktop can answer:
 
+- "Find the best price range to trade AAPL where the range width is greater than 5%, entry is within 10% of the current price, and completed trades are maximized over the last 3 years. Trades can be intraday or span multiple days. List all occurrences with dates"
 - "What is the average daily range for AAPL over the last 6 months?"
-- "Find the best range to trade TSLA with an entry within 20% of the current price to maximize completed trades over the last 3 years."
-
 - "List all recent drawdowns of MU in the last 3 years." (drawdown risk)
 - "Rank months based on VOO performance." (time-period analysis)
 - "When MU opens down 10%, does it normally extend losses intraday or recover? Show percentage of each."
