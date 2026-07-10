@@ -18,7 +18,7 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
  ┌──────────────────────────────────────────────────────┐
  │  YOUR MAC STORAGE                                    │
  │                                                       │
- │  ~/warehouse/                                         │
+ │  ~/code/stock_scraper/data/                                         │
  │   └── [ Parquet Data Files & Iceberg Logs ]  ◄──┐     │
  └─────────────────────────────────────────────────│─────┘
                                                     │
@@ -71,11 +71,11 @@ Create a Python script (`scraper.py`) that:
 **Phase 1**: Daily OHLCV only.  
 **Phase 2** (if needed): Hourly OHLCV for intraday analysis.
 
-**Output**: Parquet files organized as an Iceberg table under `~/warehouse/stocks/`.
+**Output**: Parquet files organized as an Iceberg table under `~/code/stock_scraper/data/stocks/`.
 
 ### Step 2: Warehouse Initialization
 
-- Initialize a local Apache Iceberg catalog pointing to `~/warehouse/`
+- Initialize a local Apache Iceberg catalog pointing to `~/code/stock_scraper/data/`
 - Define the Iceberg schema for OHLCV data (e.g., `symbol`, `date`, `open`, `high`, `low`, `close`, `volume`)
 - Run the scraper to backfill historical data (e.g., last 5–10 years)
 
