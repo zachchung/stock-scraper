@@ -105,7 +105,7 @@ Edit `claude_desktop_config.json` to register the MCP server:
 
 Once the MCP server is running, Claude Desktop can answer:
 
-- "Find the best price range to trade AAPL where the range width is greater than 5%, entry is within 10% of the current price, and completed trades are maximized over the last 10 years. Trades must be sequential and non-overlapping: buy when the stock crosses down through the entry price, then sell when it reaches the exit price. The next trade starts only after the previous one closes. List all occurrences with dates."
+- "Find the best price range to trade AAPL where the range width is greater than 5%, entry is within 10% of the current price, and completed trades are maximized over the last 10 years. Trades must be sequential and non-overlapping: buy when the stock crosses down through the entry price, then sell when it reaches the exit price. The next trade starts only after the previous one closes. List all occurrences with dates. Show result in a table with columns: Buy Date/Buy Low/Sell Date/Sell High/Days Held. And show the total $ P/L per share per trade in a new line."
 - "What is the average daily range for AAPL over the last 6 months?"
 - "List all recent drawdowns of MU in the last 3 years." (drawdown risk)
 - "Rank months based on VOO performance." (time-period analysis)
