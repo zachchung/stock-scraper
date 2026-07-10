@@ -5,6 +5,8 @@ import argparse
 import sys
 from datetime import datetime, timedelta
 
+import pandas as pd
+import requests
 import yfinance as yf
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, to_date
@@ -31,8 +33,13 @@ def get_spark():
     return SPARK
 
 def get_sp500_tickers():
-    tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-    return sorted(tables[0]["Symbol"].tolist())
+    resp = requests.get(
+        "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv",
+        timeout=15,
+    )
+    resp.raise_for_status()
+    df = pd.read_csv(pd.io.common.StringIO(resp.text))
+    return sorted(df["Symbol"].tolist())
 
 def fetch_ohlcv(ticker, years=5):
     stock = yf.Ticker(ticker)
@@ -87,7 +94,6 @@ def main():
     if args.tickers:
         tickers = args.tickers
     else:
-        import pandas as pd
         tickers = get_sp500_tickers()
         tickers.append("VOO")
 
@@ -98,12 +104,12 @@ def main():
             df = fetch_ohlcv(ticker, years=args.years)
             if df is not None and not df.empty:
                 write_to_iceberg(df)
-            print(f"[{i}/{total}] {ticker} done")
+            print(f"[{i}/{total}] {ticker} done", flush=True)
         except Exception as e:
-            print(f"[{i}/{total}] {ticker} FAILED: {e}", file=sys.stderr)
+            print(f"[{i}/{total}] {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
     elapsed = datetime.now() - start
-    print(f"\nCompleted in {elapsed}")
+    print(f"\nCompleted in {elapsed}", flush=True)
 
 if __name__ == "__main__":
     main()
