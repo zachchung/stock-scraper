@@ -27,7 +27,7 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
  │  ┌──────────────────────────────────────────┐   │      │
  │  │ FastMCP Container                        │   │      │
  │  │ - Bundles DuckDB engine                  │───┘      │
- │  │ - Mounts /warehouse folder read-only     │ (3) Scans│
+ │  │ - Mounts /data folder read-only         │ (3) Scans│
  │  └──────────────────────────────────────────┘          │
  └───────────────────────▲────────────────────────────────┘
                           │
@@ -51,7 +51,7 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 
 1. A Python/PySpark script fetches OHLCV data from **yfinance** (Yahoo Finance) or **investing.com**.
 2. Data is processed in-memory on your Mac then persisted to SSD as Apache Iceberg tables backed by Parquet files.
-3. A Docker container runs a FastMCP server that bundles DuckDB. The `/warehouse` directory is mounted read-only so DuckDB can query the Parquet/Iceberg files directly without copying.
+3. A Docker container runs a FastMCP server that bundles DuckDB. The `/data` directory is mounted read-only so DuckDB can query the Parquet/Iceberg files directly without copying.
 4. Claude Desktop connects to the FastMCP server via stdio and issues natural-language trading queries.
 
 ---
@@ -90,7 +90,7 @@ Build a Docker image containing:
   - **Resource**: `stocks://{symbol}` — return formatted OHLCV for a ticker
   - **Prompt**: templates for common trading analysis questions
 
-The container mounts `~/warehouse:/warehouse:ro` at runtime.
+The container mounts `~/data:/data:ro` at runtime.
 
 ### Step 4: Claude Desktop Configuration
 
@@ -101,7 +101,7 @@ Edit `claude_desktop_config.json` to register the MCP server:
   "mcpServers": {
     "stock-scraper": {
       "command": "docker",
-      "args": ["run", "-i", "--rm", "-v", "~/warehouse:/warehouse:ro", "stock-scraper-mcp"]
+      "args": ["run", "-i", "--rm", "-v", "~/data:/data:ro", "stock-scraper-mcp"]
     }
   }
 }
