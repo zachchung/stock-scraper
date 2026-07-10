@@ -60,37 +60,22 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 
 ### Step 1: Data Ingestion Script
 
-Create a Python script (`scraper.py`) that:
+[`scraper.py`](scraper.py) fetches daily OHLCV for **all S&P 500 constituents** + **VOO** from **yfinance**, processes it with PySpark, and stores into Iceberg tables partitioned by symbol under `data/stocks/`. It supports both backfill (`--backfill --years 5`) and incremental append (merges on `symbol` + `date`).
 
-- Scrapes daily OHLCV for **all S&P 500 constituents** + **VOO**
-- Data sources: **yfinance** (Yahoo Finance) and **investing.com**
-- Uses PySpark for distributed (or local) processing and transformation
-- Handles incremental updates (append new data without duplicating existing records)
-- Validates data quality (no gaps, correct types)
+### Step 2: Warehouse
 
-**Phase 1**: Daily OHLCV only.  
-**Phase 2** (if needed): Hourly OHLCV for intraday analysis.
-
-**Output**: Parquet files organized as an Iceberg table under `~/code/stock_scraper/data/stocks/`.
-
-### Step 2: Warehouse Initialization
-
-- Initialize a local Apache Iceberg catalog pointing to `~/code/stock_scraper/data/`
-- Define the Iceberg schema for OHLCV data (e.g., `symbol`, `date`, `open`, `high`, `low`, `close`, `volume`)
-- Run the scraper to backfill historical data (e.g., last 5–10 years)
+A local Apache Iceberg catalog is initialized at `data/` with the schema (`symbol`, `date`, `open`, `high`, `low`, `close`, `volume`, `source`). Historical data has already been backfilled; run `scraper.py` again to refresh.
 
 ### Step 3: FastMCP + DuckDB Docker Image
 
-Build a Docker image containing:
+[`Dockerfile.mcp`](Dockerfile.mcp) builds an image containing Python, FastMCP, and DuckDB. [`mcp_server.py`](mcp_server.py) runs inside the container and exposes:
 
-- Python + FastMCP library
-- DuckDB (with Parquet and Iceberg extension)
-- A simple MCP server script that exposes:
-  - **Tool**: `query_ohlcv(sql_query)` — run arbitrary DuckDB SQL against the warehouse
-  - **Resource**: `stocks://{symbol}` — return formatted OHLCV for a ticker
-  - **Prompt**: templates for common trading analysis questions
+- **`query(sql)`** — run arbitrary DuckDB SQL against the warehouse
+- **`get_stock_data(symbol, limit)`** — OHLCV for a ticker
+- **`list_symbols()`** — all available tickers
+- **`analyze_trades(symbol, entry_range_pct, years)`** — find optimal trade ranges
 
-The container mounts `~/data:/data:ro` at runtime.
+The container mounts `~/code/stock_scraper/data:/data:ro` at runtime.
 
 ### Step 4: Claude Desktop Configuration
 
@@ -101,7 +86,7 @@ Edit `claude_desktop_config.json` to register the MCP server:
   "mcpServers": {
     "stock-scraper": {
       "command": "docker",
-      "args": ["run", "-i", "--rm", "-v", "~/data:/data:ro", "stock-scraper-mcp"]
+      "args": ["run", "-i", "--rm", "-v", "~/code/stock_scraper/data:/data:ro", "stock-scraper-mcp"]
     }
   }
 }
@@ -145,7 +130,7 @@ brew install openjdk@17
 Add to your shell config (`~/.zshrc`):
 
 ```bash
-export JAVA_HOME=/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+export JAVA_HOME=$HOME/.sdkman/candidates/java/current
 ```
 
 ### 2. Python + PySpark + Iceberg
