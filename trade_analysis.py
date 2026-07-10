@@ -1,9 +1,12 @@
 import duckdb
+import sys
+
+symbol = sys.argv[1].upper() if len(sys.argv) > 1 else "META"
 
 con = duckdb.connect()
-data = con.execute("""
+data = con.execute(f"""
     SELECT date, open, high, low, close
-    FROM read_parquet('data/stocks/ohlcv/data/symbol=META/*.parquet')
+    FROM read_parquet('data/stocks/ohlcv/data/symbol={symbol}/*.parquet')
     ORDER BY date
 """).fetchdf()
 
@@ -38,8 +41,8 @@ best_count = -1
 best_entry = None
 best_exit = None
 best_trades = []
+best_width = None
 
-# Finer step for entry: $0.25, finer step for width: 0.001 (0.1%)
 entry_step = 0.25
 entry_candidates = []
 e = entry_range_min
@@ -48,7 +51,7 @@ while e <= entry_range_max:
     e += entry_step
 
 for entry in entry_candidates:
-    width = 0.051  # > 5%
+    width = 0.051
     while width <= 0.25:
         exit_price = round(entry * (1 + width), 2)
         trades = simulate(entry, exit_price)
@@ -61,9 +64,8 @@ for entry in entry_candidates:
             best_width = width
         width += 0.001
 
-# Refine around best area with even finer grid
-refine_range = 2.0  # +/- $2
-refine_step = 0.10  # $0.10 step
+refine_range = 2.0
+refine_step = 0.10
 e_start = max(best_entry - refine_range, entry_range_min)
 e_end = min(best_entry + refine_range, entry_range_max)
 refine_entry_candidates = []
@@ -80,8 +82,6 @@ for entry in refine_entry_candidates:
         exit_price = round(entry * (1 + width), 2)
         trades = simulate(entry, exit_price)
         count = len(trades)
-        if count > best_count or (count == best_count and entry == best_entry and width == best_width):
-            pass
         if count > best_count:
             best_count = count
             best_entry = entry
@@ -90,7 +90,7 @@ for entry in refine_entry_candidates:
             best_width = width
         width += 0.0005
 
-print(f"== META Best Range ==")
+print(f"== {symbol} Best Range ==")
 print(f"Current Price: ${current_price:.2f}")
 print(f"Entry Price: ${best_entry:.2f}")
 print(f"Exit Price: ${best_exit:.2f}")
