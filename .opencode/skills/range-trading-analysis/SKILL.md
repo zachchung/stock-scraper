@@ -1,5 +1,5 @@
 ---
-name: stock-scanner-trade-analysis
+name: range-trading-analysis
 description: >
   Use when the user asks to find the best price range to trade a stock (AAPL, META, TSLA, etc.)
   using DuckDB on the local stock_scraper dataset. Covers range-width optimization,
@@ -7,7 +7,7 @@ description: >
   DO NOT use for general stock questions or financial advice outside this specific analysis.
 ---
 
-# Stock Scanner — Trade Range Analysis
+# Range Trading Analysis
 
 Analyzes the local stock_scraper dataset (Iceberg/Parquet, queried via DuckDB)
 to find the optimal entry/exit range that maximizes completed sequential trades.
