@@ -81,16 +81,16 @@ STOCK_DATA_DIR=~/code/stock_scraper/data python src/stock_scraper/mcp_server.py
 
 ### Step 4: Claude Desktop Configuration
 
-Edit `claude_desktop_config.json` to register the MCP server:
+Edit `claude_desktop_config.json` to register the MCP server (adjust paths to match your setup):
 
 ```json
 {
   "mcpServers": {
     "stock-scraper": {
-      "command": "/path/to/stock_scraper/.venv/bin/python",
-      "args": ["/path/to/stock_scraper/src/stock_scraper/mcp_server.py"],
+      "command": "/Users/ZacharyChung1/code/stock_scraper/.venv/bin/python",
+      "args": ["/Users/ZacharyChung1/code/stock_scraper/src/stock_scraper/mcp_server.py"],
       "env": {
-        "STOCK_DATA_DIR": "/path/to/stock_scraper/data"
+        "STOCK_DATA_DIR": "/Users/ZacharyChung1/code/stock_scraper/data"
       }
     }
   }
