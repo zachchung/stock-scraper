@@ -50,10 +50,10 @@ data/stocks/ohlcv/data/symbol=<TICKER>/*.parquet
 
 ## Running
 
-The `range_trade_analysis.py` script in the project root
+The `scripts/range_trade_analysis.py` script
 has the full implementation. Run it with:
 ```bash
-.venv/bin/python range_trade_analysis.py
+.venv/bin/python scripts/range_trade_analysis.py
 ```
 
 To analyze a different ticker, edit the `symbol=META` path in the DuckDB query.

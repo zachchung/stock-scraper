@@ -57,7 +57,7 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 
 ### Step 1: Data Ingestion Script
 
-[`scraper.py`](scraper.py) fetches daily OHLCV for **all S&P 500 constituents** + **VOO** from **yfinance**, processes it with PySpark, and stores into Iceberg tables partitioned by symbol under `data/stocks/`. It supports both backfill (`--backfill --years 5`) and incremental append (merges on `symbol` + `date`).
+[`scraper.py`](src/stock_scraper/scraper.py) fetches daily OHLCV for **all S&P 500 constituents** + **VOO** from **yfinance**, processes it with PySpark, and stores into Iceberg tables partitioned by symbol under `data/stocks/`. It supports both backfill (`--backfill --years 5`) and incremental append (merges on `symbol` + `date`).
 
 ### Step 2: Warehouse
 
@@ -65,7 +65,7 @@ A local Apache Iceberg catalog is initialized at `data/` with the schema (`symbo
 
 ### Step 3: FastMCP + DuckDB Server
 
-[`mcp_server.py`](mcp_server.py) runs a FastMCP server that bundles DuckDB and exposes:
+[`mcp_server.py`](src/stock_scraper/mcp_server.py) runs a FastMCP server that bundles DuckDB and exposes:
 
 - **`query(sql)`** — run arbitrary DuckDB SQL against the warehouse
 - **`get_stock_data(symbol, limit)`** — OHLCV for a ticker
@@ -76,7 +76,7 @@ Run it directly:
 
 ```bash
 source .venv/bin/activate
-STOCK_DATA_DIR=~/code/stock_scraper/data python mcp_server.py
+STOCK_DATA_DIR=~/code/stock_scraper/data python src/stock_scraper/mcp_server.py
 ```
 
 ### Step 4: Claude Desktop Configuration
@@ -88,7 +88,7 @@ Edit `claude_desktop_config.json` to register the MCP server:
   "mcpServers": {
     "stock-scraper": {
       "command": "/path/to/stock_scraper/.venv/bin/python",
-      "args": ["/path/to/stock_scraper/mcp_server.py"],
+      "args": ["/path/to/stock_scraper/src/stock_scraper/mcp_server.py"],
       "env": {
         "STOCK_DATA_DIR": "/path/to/stock_scraper/data"
       }
@@ -192,10 +192,10 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 3. Run data ingestion (backfill)
-python scraper.py --backfill --years 5
+python src/stock_scraper/scraper.py --backfill --years 5
 
 # 4. Start MCP server
-STOCK_DATA_DIR=~/code/stock_scraper/data python mcp_server.py
+STOCK_DATA_DIR=~/code/stock_scraper/data python src/stock_scraper/mcp_server.py
 
 # 5. Register with Claude Desktop (see Step 4)
 ```

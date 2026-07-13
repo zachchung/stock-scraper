@@ -1,12 +1,15 @@
-import duckdb
+import os
 import sys
+import duckdb
 
 symbol = sys.argv[1].upper() if len(sys.argv) > 1 else "META"
+
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 con = duckdb.connect()
 data = con.execute(f"""
     SELECT date, open, high, low, close
-    FROM read_parquet('data/stocks/ohlcv/data/symbol={symbol}/*.parquet')
+    FROM read_parquet('{base_dir}/data/stocks/ohlcv/data/symbol={symbol}/*.parquet')
     ORDER BY date
 """).fetchdf()
 
