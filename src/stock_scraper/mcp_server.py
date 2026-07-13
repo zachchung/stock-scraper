@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """FastMCP server that exposes OHLCV data via DuckDB."""
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -113,4 +114,4 @@ def analyze_trades(
 
 
 if __name__ == "__main__":
-    mcp.run_stdio_async()
+    asyncio.run(mcp.run_stdio_async())
