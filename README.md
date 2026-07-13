@@ -15,26 +15,23 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
  [ Local RAM / Memory ]
         │
         ▼ (2) Saves directly to your SSD
- ┌──────────────────────────────────────────────────────┐
- │  YOUR MAC STORAGE                                    │
- │                                                       │
- │  ~/code/stock_scraper/data/                                         │
- │   └── [ Parquet Data Files & Iceberg Logs ]  ◄──┐     │
- └─────────────────────────────────────────────────│─────┘
-                                                    │
- ┌─────────────────────────────────────────────────│─────┐
- │  DOCKER RUNTIME                                 │      │
- │  ┌──────────────────────────────────────────┐   │      │
- │  │ FastMCP Container                        │   │      │
- │  │ - Bundles DuckDB engine                  │───┘      │
- │  │ - Mounts /data folder read-only         │ (3) Scans│
- │  └──────────────────────────────────────────┘          │
- └───────────────────────▲────────────────────────────────┘
-                          │
-                          │ (4) Stdio stream
- ┌────────────────────────┴───────────────────────────────┐
- │  CLAUDE DESKTOP APP                                    │
- └────────────────────────────────────────────────────────┘
+ ┌───────────────────────────────────────────────┐
+ │  YOUR MAC STORAGE                             │
+ │                                                │
+ │  ~/code/stock_scraper/data/                    │
+ │   └── [ Parquet Data Files & Iceberg Logs ]   │
+ └───────────────────────┬───────────────────────┘
+                         │ (3) DuckDB reads directly
+ ┌───────────────────────▼───────────────────────┐
+ │  FastMCP Server (runs natively on your Mac)   │
+ │  - Bundles DuckDB engine                      │
+ │  - Exposes tools/resources over stdio         │
+ └───────────────────────▲───────────────────────┘
+                         │
+                         │ (4) Stdio stream
+ ┌───────────────────────┴───────────────────────┐
+ │  CLAUDE DESKTOP APP                           │
+ └───────────────────────────────────────────────┘
 ```
 
 ### Components
@@ -43,15 +40,15 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 |-------|-----------|------|
 | **Data Ingestion** | Python + PySpark | Fetch OHLCV data from public web API, transform |
 | **Storage** | Apache Iceberg (Parquet) on local SSD | Durable, queryable historical data |
-| **Query Engine** | DuckDB (in FastMCP container) | Read Parquet/Iceberg files directly |
-| **MCP Server** | FastMCP (Python, Docker) | Expose DuckDB queries as MCP tools/resources |
+| **Query Engine** | DuckDB (bundled in FastMCP) | Read Parquet/Iceberg files directly |
+| **MCP Server** | FastMCP (Python) | Expose DuckDB queries as MCP tools/resources |
 | **Client** | Claude Desktop App | Consume MCP tools via stdio |
 
 ### Data Flow
 
 1. A Python/PySpark script fetches OHLCV data from **yfinance** (Yahoo Finance) or **investing.com**.
 2. Data is processed in-memory on your Mac then persisted to SSD as Apache Iceberg tables backed by Parquet files.
-3. A Docker container runs a FastMCP server that bundles DuckDB. The `/data` directory is mounted read-only so DuckDB can query the Parquet/Iceberg files directly without copying.
+3. The FastMCP server runs natively on your Mac, uses DuckDB to query the Parquet files directly.
 4. Claude Desktop connects to the FastMCP server via stdio and issues natural-language trading queries.
 
 ---
@@ -66,16 +63,21 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 
 A local Apache Iceberg catalog is initialized at `data/` with the schema (`symbol`, `date`, `open`, `high`, `low`, `close`, `volume`, `source`). Historical data has already been backfilled; run `scraper.py` again to refresh.
 
-### Step 3: FastMCP + DuckDB Docker Image
+### Step 3: FastMCP + DuckDB Server
 
-[`Dockerfile.mcp`](Dockerfile.mcp) builds an image containing Python, FastMCP, and DuckDB. [`mcp_server.py`](mcp_server.py) runs inside the container and exposes:
+[`mcp_server.py`](mcp_server.py) runs a FastMCP server that bundles DuckDB and exposes:
 
 - **`query(sql)`** — run arbitrary DuckDB SQL against the warehouse
 - **`get_stock_data(symbol, limit)`** — OHLCV for a ticker
 - **`list_symbols()`** — all available tickers
 - **`analyze_trades(symbol, entry_range_pct, years)`** — find optimal trade ranges
 
-The container mounts `~/code/stock_scraper/data:/data:ro` at runtime.
+Run it directly:
+
+```bash
+source .venv/bin/activate
+STOCK_DATA_DIR=~/code/stock_scraper/data python mcp_server.py
+```
 
 ### Step 4: Claude Desktop Configuration
 
@@ -85,8 +87,11 @@ Edit `claude_desktop_config.json` to register the MCP server:
 {
   "mcpServers": {
     "stock-scraper": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "-v", "~/code/stock_scraper/data:/data:ro", "stock-scraper-mcp"]
+      "command": "/path/to/stock_scraper/.venv/bin/python",
+      "args": ["/path/to/stock_scraper/mcp_server.py"],
+      "env": {
+        "STOCK_DATA_DIR": "/path/to/stock_scraper/data"
+      }
     }
   }
 }
@@ -147,17 +152,15 @@ pip install pyspark
 #   spark.jars = /path/to/iceberg-spark-runtime-3.5_2.12-1.6.0.jar
 ```
 
-### 3. Docker Desktop
+### 3. DuckDB
+
+Install DuckDB CLI for ad-hoc queries:
 
 ```bash
-brew install --cask docker
+brew install duckdb
 ```
 
-Docker is used only for the MCP server container. The scraper runs natively on your Mac.
-
-### 4. DuckDB (bundled in the Docker image)
-
-No local install needed — DuckDB lives inside the FastMCP container.
+DuckDB is also bundled in the MCP server via the Python `duckdb` package.
 
 ---
 
@@ -170,13 +173,11 @@ Approximate disk footprint:
 | OpenJDK 17 (`brew install openjdk@17`) | ~350 MB |
 | PySpark (`pip install pyspark`) | ~250 MB |
 | Iceberg Spark runtime jar | ~80 MB |
-| Docker Desktop (app + Linux VM) | ~2–3 GB |
-| **Total** | **~3–3.5 GB** |
+| **Total** | **~680 MB** |
 
 ### Other concerns
 
 - **Cold start**: PySpark/Java takes ~15–30s to spin up for each scraper run. Since the scraper runs once a day (or on demand), this is negligible.
-- **Docker background VM**: Uses ~1–2 GB RAM and some CPU — fine on any modern Mac.
 - **Iceberg metadata**: Creates small extra files per table; overhead is < 1 MB.
 
 ---
@@ -193,8 +194,8 @@ pip install -r requirements.txt
 # 3. Run data ingestion (backfill)
 python scraper.py --backfill --years 5
 
-# 4. Build Docker image for MCP server
-docker build -t stock-scraper-mcp -f Dockerfile.mcp .
+# 4. Start MCP server
+STOCK_DATA_DIR=~/code/stock_scraper/data python mcp_server.py
 
 # 5. Register with Claude Desktop (see Step 4)
 ```
@@ -207,8 +208,7 @@ docker build -t stock-scraper-mcp -f Dockerfile.mcp .
 - OpenJDK 17
 - PySpark (runs natively on Mac — no cluster needed)
 - Apache Iceberg + Parquet (via PySpark)
-- Docker Desktop (for FastMCP container)
-- DuckDB (bundled in container)
+- DuckDB
 
 ---
 
@@ -219,9 +219,18 @@ docker build -t stock-scraper-mcp -f Dockerfile.mcp .
 - **Columnar storage** — Parquet file format, compression, predicate pushdown
 - **Local analytics** — DuckDB querying Parquet/Iceberg files directly
 - **MCP protocol** — stdio-based server design, tool/resource/prompt exposure
-- **Docker packaging** — containerizing a Python app, read-only volume mounts
 
 This project touches the modern data stack — Spark → Iceberg → Parquet → DuckDB — all on a single Mac. Solid portfolio material.
+
+---
+
+## Design Decisions
+
+### Why no Docker?
+
+Docker Desktop on macOS is heavy: a ~2–3 GB install plus a Linux VM consuming 1–2 GB RAM at all times, even when idle. For a single-user local project, this overhead isn't justified.
+
+The MCP server runs natively as a Python process — no isolation needed since all services live on the same machine. The trade-off is environment dependency (Python + package versions), but a virtual environment handles that cleanly.
 
 ---
 
