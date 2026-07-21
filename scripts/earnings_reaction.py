@@ -64,8 +64,12 @@ if not has_ohlcv:
     sys.exit(1)
 
 post_market_query = """
-WITH ohlcv AS (
-    SELECT date, open, close FROM read_parquet('""" + ohlcv_path + """')
+WITH ohlcv_raw AS (
+    SELECT DISTINCT date, open, close FROM read_parquet('""" + ohlcv_path + """')
+),
+ohlcv AS (
+    SELECT date, FIRST(open) AS open, FIRST(close) AS close
+    FROM ohlcv_raw GROUP BY date
 )
 SELECT
     e.ed AS earning_date,
@@ -86,8 +90,12 @@ ORDER BY e.ed DESC
 LIMIT """ + str(limit)
 
 pre_market_query = """
-WITH ohlcv AS (
-    SELECT date, open, close FROM read_parquet('""" + ohlcv_path + """')
+WITH ohlcv_raw AS (
+    SELECT DISTINCT date, open, close FROM read_parquet('""" + ohlcv_path + """')
+),
+ohlcv AS (
+    SELECT date, FIRST(open) AS open, FIRST(close) AS close
+    FROM ohlcv_raw GROUP BY date
 )
 SELECT
     e.ed AS earning_date,
@@ -120,8 +128,12 @@ elif is_post:
 else:
     # Mixed: detect per-row
     query = """
-    WITH ohlcv AS (
-        SELECT date, open, close FROM read_parquet('""" + ohlcv_path + """')
+    WITH ohlcv_raw AS (
+        SELECT DISTINCT date, open, close FROM read_parquet('""" + ohlcv_path + """')
+    ),
+    ohlcv AS (
+        SELECT date, FIRST(open) AS open, FIRST(close) AS close
+        FROM ohlcv_raw GROUP BY date
     ),
     base AS (
         SELECT
