@@ -120,6 +120,9 @@ def fetch_income_statements(ticker):
         values="value",
     ).reset_index()
     pivoted.columns.name = None
+    for col_name, _ in INCOME_METRICS:
+        if col_name not in pivoted.columns:
+            pivoted[col_name] = float('nan')
     return pivoted
 
 def write_to_iceberg(df):
