@@ -5,6 +5,7 @@ import argparse
 import sys
 from datetime import datetime, timedelta
 
+import duckdb
 import pandas as pd
 import requests
 import yfinance as yf
@@ -41,9 +42,14 @@ def get_sp500_tickers():
     df = pd.read_csv(pd.io.common.StringIO(resp.text))
     return sorted(df["Symbol"].tolist())
 
-def fetch_ohlcv(ticker, years=5):
-    stock = yf.Ticker(ticker)
-    hist = stock.history(period=f"{years}y")
+def fetch_ohlcv(ticker, years=5, start_date=None):
+    if start_date:
+        start = (start_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        end = datetime.today().strftime("%Y-%m-%d")
+        hist = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+    else:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period=f"{years}y")
     if hist.empty:
         return None
     df = hist.reset_index()[["Date", "Open", "High", "Low", "Close", "Volume"]].copy()
@@ -83,6 +89,21 @@ def write_to_iceberg(df):
         WHEN NOT MATCHED THEN INSERT *
     """)
 
+def get_latest_dates():
+    parquet_path = f"{WAREHOUSE_PATH}/stocks/ohlcv/data/*/*.parquet"
+    con = duckdb.connect()
+    try:
+        df = con.execute(f"""
+            SELECT symbol, MAX(date) as last_date
+            FROM read_parquet('{parquet_path}')
+            GROUP BY symbol
+        """).fetchdf()
+        return df.set_index('symbol')['last_date'].to_dict()
+    except Exception:
+        return {}
+    finally:
+        con.close()
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--backfill", action="store_true", help="Backfill historical data")
@@ -97,14 +118,24 @@ def main():
         tickers = get_sp500_tickers()
         tickers.append("VOO")
 
+    if args.incremental and not args.backfill:
+        latest_dates = get_latest_dates()
+    else:
+        latest_dates = {}
+
     start = datetime.now()
     total = len(tickers)
     for i, ticker in enumerate(tickers, 1):
         try:
-            df = fetch_ohlcv(ticker, years=args.years)
+            last_date = latest_dates.get(ticker) if latest_dates else None
+            if last_date is not None:
+                df = fetch_ohlcv(ticker, start_date=last_date)
+            else:
+                df = fetch_ohlcv(ticker, years=args.years)
             if df is not None and not df.empty:
                 write_to_iceberg(df)
-            print(f"[{i}/{total}] {ticker} done", flush=True)
+            label = "incr" if last_date is not None else "full"
+            print(f"[{i}/{total}] {ticker} ({label}) done", flush=True)
         except Exception as e:
             print(f"[{i}/{total}] {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 

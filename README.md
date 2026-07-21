@@ -57,11 +57,14 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 
 ### Step 1: Data Ingestion Script
 
-[`scraper.py`](src/stock_scraper/scraper.py) fetches daily OHLCV for **all S&P 500 constituents** + **VOO** from **yfinance**, processes it with PySpark, and stores into Iceberg tables partitioned by symbol under `data/stocks/`. It supports both backfill (`--backfill --years 5`) and incremental append (merges on `symbol` + `date`).
+[`scraper.py`](src/stock_scraper/scraper.py) fetches daily OHLCV for **all S&P 500 constituents** + **VOO** from **yfinance**, processes it with PySpark, and stores into Iceberg tables partitioned by symbol under `data/stocks/`. It supports two modes:
+
+- **Backfill** (`--backfill --years 5`): full historical download for the given year window.
+- **Incremental** (`--incremental`): detects the latest date already stored per symbol (via DuckDB) and fetches only rows after that date. Falls back to a 5-year backfill for any symbol with no local data.
 
 ### Step 2: Warehouse
 
-A local Apache Iceberg catalog is initialized at `data/` with the schema (`symbol`, `date`, `open`, `high`, `low`, `close`, `volume`, `source`). Historical data has already been backfilled; run `scraper.py` again to refresh.
+A local Apache Iceberg catalog is initialized at `data/` with the schema (`symbol`, `date`, `open`, `high`, `low`, `close`, `volume`, `source`). Historical data has already been backfilled; run `scraper.py --incremental` daily to refresh with only new rows.
 
 ### Step 3: FastMCP + DuckDB Server
 
@@ -191,8 +194,9 @@ python -m venv .venv && source .venv/bin/activate
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Run data ingestion (backfill)
-python src/stock_scraper/scraper.py --backfill --years 5
+# 3. Run data ingestion
+python src/stock_scraper/scraper.py --backfill --years 5   # initial backfill
+python src/stock_scraper/scraper.py --incremental           # daily refresh
 
 # 4. Start MCP server
 STOCK_DATA_DIR=~/code/stock_scraper/data python src/stock_scraper/mcp_server.py
