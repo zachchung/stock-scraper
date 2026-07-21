@@ -8,30 +8,53 @@ from datetime import datetime
 symbol = sys.argv[1].upper() if len(sys.argv) > 1 else "AAPL"
 limit = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 10
 
-stock = yf.Ticker(symbol)
-ed = stock.earnings_dates
-if ed is None or ed.empty:
-    print(f"No earnings data found for {symbol}")
-    sys.exit(1)
-
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 con = duckdb.connect()
 
+earnings_parquet = f"{base_dir}/data/stocks/earnings_dates/data/symbol={symbol}/*.parquet"
+has_local = False
+try:
+    local_count = con.execute(f"SELECT COUNT(*) FROM read_parquet('{earnings_parquet}')").fetchone()[0]
+    if local_count > 0:
+        has_local = True
+except Exception:
+    pass
+
 con.execute("CREATE TEMP TABLE earnings_dates (ed DATE, eps_est DOUBLE, eps_act DOUBLE, surprise DOUBLE, session VARCHAR)")
-for idx in ed.index[:limit + 5]:
-    dt = idx.to_pydatetime()
-    eps_est = ed.loc[idx, 'EPS Estimate']
-    eps_act = ed.loc[idx, 'Reported EPS']
-    surprise = ed.loc[idx, 'Surprise(%)']
-    session = 'post_market' if dt.hour >= 16 else 'pre_market'
-    con.execute(
-        "INSERT INTO earnings_dates VALUES (?, ?, ?, ?, ?)",
-        [dt.date(),
-         None if pd.isna(eps_est) else float(eps_est),
-         None if pd.isna(eps_act) else float(eps_act),
-         None if pd.isna(surprise) else float(surprise),
-         session]
-    )
+
+if has_local:
+    con.execute(f"""
+        INSERT INTO earnings_dates
+        SELECT
+            CAST(report_date AS DATE) AS ed,
+            eps_estimate,
+            eps_actual,
+            surprise_pct,
+            market_session
+        FROM read_parquet('{earnings_parquet}')
+        ORDER BY report_date DESC
+        LIMIT {limit + 5}
+    """)
+else:
+    stock = yf.Ticker(symbol)
+    ed = stock.earnings_dates
+    if ed is None or ed.empty:
+        print(f"No earnings data found for {symbol}")
+        sys.exit(1)
+    for idx in ed.index[:limit + 5]:
+        dt = idx.to_pydatetime()
+        eps_est = ed.loc[idx, 'EPS Estimate']
+        eps_act = ed.loc[idx, 'Reported EPS']
+        surprise = ed.loc[idx, 'Surprise(%)']
+        session = 'post_market' if dt.hour >= 16 else 'pre_market'
+        con.execute(
+            "INSERT INTO earnings_dates VALUES (?, ?, ?, ?, ?)",
+            [dt.date(),
+             None if pd.isna(eps_est) else float(eps_est),
+             None if pd.isna(eps_act) else float(eps_act),
+             None if pd.isna(surprise) else float(surprise),
+             session]
+        )
 
 ohlcv_path = f"{base_dir}/data/stocks/ohlcv/data/symbol={symbol}/*.parquet"
 has_ohlcv = os.path.isdir(f"{base_dir}/data/stocks/ohlcv/data/symbol={symbol}")
