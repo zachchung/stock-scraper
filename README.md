@@ -228,6 +228,104 @@ This project touches the modern data stack — Spark → Iceberg → Parquet →
 
 ---
 
+## Planned: Earnings Data Extension
+
+### Motivation
+
+Ingest earnings announcement dates and income statement data so the MCP server can answer questions like:
+
+> *"Show me a table listing the past 10 MSFT post-earnings day reactions."*
+
+### New Data Source
+
+All data comes from **yfinance** — the same library already used for OHLCV:
+
+| Data | yfinance API | Frequency | Rows |
+|------|-------------|-----------|------|
+| Earnings Dates | `Ticker.earnings_dates` | Quarterly | ~20K (500 symbols × 40 quarters) |
+| Income Statements | `Ticker.quarterly_income_stmt` | Quarterly | ~20K |
+
+### Pre/Post Market Detection
+
+The `earnings_dates` index is a timezone-aware datetime (`America/New_York`), so the release session can be determined:
+
+| Timestamp (ET) | Market Session | Reaction Day |
+|---|---|---|
+| Before 09:30 | `pre_market` | Same trading day |
+| 09:30 – 16:00 | `during_market` | Same trading day |
+| After 16:00 | `post_market` | **Next** trading day |
+
+This is critical for measuring the correct price reaction — MSFT reports post-market at 16:00 ET, so its day-1 reaction is the next trading day's open-to-close return plus the overnight gap.
+
+### New Tables
+
+**Table: `local.stocks.earnings_dates`** (Iceberg)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `symbol` | `STRING` | Ticker |
+| `report_date` | `TIMESTAMPTZ` | Earnings release timestamp (America/New_York) |
+| `eps_estimate` | `DOUBLE` | Consensus EPS estimate |
+| `eps_actual` | `DOUBLE` | Reported EPS |
+| `surprise_pct` | `DOUBLE` | (actual - estimate) / \|estimate\| × 100 |
+| `revenue_estimate` | `DOUBLE` | Consensus revenue estimate |
+| `revenue_actual` | `DOUBLE` | Reported revenue |
+| `market_session` | `STRING` | `pre_market`, `during_market`, or `post_market` |
+
+**Table: `local.stocks.income_statements`** (Iceberg)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `symbol` | `STRING` | Ticker |
+| `fiscal_date` | `DATE` | Quarter-end date |
+| `total_revenue` | `DOUBLE` | Total revenue |
+| `gross_profit` | `DOUBLE` | Gross profit |
+| `operating_income` | `DOUBLE` | Operating income |
+| `net_income` | `DOUBLE` | Net income |
+| `diluted_eps` | `DOUBLE` | Diluted EPS |
+| `ebit` | `DOUBLE` | EBIT |
+| `ebitda` | `DOUBLE` | EBITDA |
+
+### Ingestion
+
+New CLI flag `--earnings` added to `scraper.py`:
+
+```bash
+python src/stock_scraper/scraper.py --earnings         # fetch earnings for all symbols
+python src/stock_scraper/scraper.py --earnings --tickers AAPL MSFT  # specific symbols
+```
+
+Runs in the same ticker loop as OHLCV, writing to separate Iceberg tables via `MERGE INTO`.
+
+### MCP Tools (planned)
+
+```python
+get_earnings(symbol: str, n: int = 10) -> str
+  """Quarterly earnings dates with EPS surprise for a ticker."""
+
+post_earnings_reaction(symbol: str, n: int = 10) -> str
+  """Symbol's post-earnings day price reaction. Returns a table:
+     report_date, market_session, eps_surprise%, first_trading_day,
+     open, close, day1_return%, overnight_gap%."""
+```
+
+The `post_earnings_reaction` tool joins `earnings_dates` with the existing `ohlcv` table, using the `market_session` flag to pick the correct reaction day.
+
+### Example Output
+
+```
+ MSFT post-earnings reactions (last 5):
+┌──────────────┬───────────────┬──────────────┬────────────────┬────────┬────────┬──────────────┬─────────┐
+│ report_date  │ market_session│ eps_surprise%│ reaction_date  │ open   │ close  │ day1_return% │ gap%    │
+├──────────────┼───────────────┼──────────────┼────────────────┼────────┼────────┼──────────────┼─────────┤
+│ 2026-04-29   │ post_market   │         4.90 │ 2026-04-30     │ 468.21 │ 472.54 │        +0.92 │   -0.30 │
+│ 2026-01-28   │ post_market   │         5.69 │ 2026-01-29     │ 452.10 │ 458.30 │        +1.37 │   +0.50 │
+│ 2025-10-29   │ post_market   │         1.23 │ 2025-10-30     │ 439.80 │ 441.15 │        +0.31 │   -0.10 │
+│ 2025-07-29   │ post_market   │         6.80 │ 2025-07-30     │ 465.50 │ 470.20 │        +1.01 │   +0.80 │
+│ 2025-04-29   │ post_market   │         3.15 │ 2025-04-30     │ 428.90 │ 425.40 │        -0.82 │   -0.60 │
+└──────────────┴───────────────┴──────────────┴────────────────┴────────┴────────┴──────────────┴─────────┘
+```
+
 ## Design Decisions
 
 ### Why no Docker?
