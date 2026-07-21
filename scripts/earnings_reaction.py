@@ -63,40 +63,47 @@ if not has_ohlcv:
     con.execute("DROP TABLE earnings_dates")
     sys.exit(1)
 
-post_market_query = """
+ohlcv_cte = """
 WITH ohlcv_raw AS (
     SELECT DISTINCT date, open, close FROM read_parquet('""" + ohlcv_path + """')
 ),
 ohlcv AS (
     SELECT date, FIRST(open) AS open, FIRST(close) AS close
     FROM ohlcv_raw GROUP BY date
+),
+ohlcv_rn AS (
+    SELECT date, open, close, ROW_NUMBER() OVER (ORDER BY date) AS rn
+    FROM ohlcv
 )
+"""
+
+post_market_query = ohlcv_cte + """
 SELECT
     e.ed AS earning_date,
     e.session,
-    (SELECT MIN(date) FROM ohlcv WHERE date > e.ed) AS reaction_date,
+    (SELECT date FROM ohlcv_rn WHERE rn = (SELECT MIN(rn) FROM ohlcv_rn WHERE date > e.ed)) AS reaction_date,
     e.eps_est,
     e.eps_act,
     e.surprise,
-    ROUND(((SELECT open FROM ohlcv WHERE date = (SELECT MIN(date) FROM ohlcv WHERE date > e.ed)) -
-           (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date <= e.ed))) /
-           (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date <= e.ed)) * 100, 2) AS gap_pct,
-    ROUND(((SELECT close FROM ohlcv WHERE date = (SELECT MIN(date) FROM ohlcv WHERE date > e.ed)) -
-           (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date <= e.ed))) /
-           (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date <= e.ed)) * 100, 2) AS day_ret
+    ROUND(
+        ((SELECT open FROM ohlcv_rn WHERE rn = (SELECT MIN(rn) FROM ohlcv_rn WHERE date > e.ed)) -
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date <= e.ed))) /
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date <= e.ed)) * 100, 2) AS day_open_pct,
+    ROUND(
+        ((SELECT close FROM ohlcv_rn WHERE rn = (SELECT MIN(rn) FROM ohlcv_rn WHERE date > e.ed)) -
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date <= e.ed))) /
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date <= e.ed)) * 100, 2) AS day_close_pct,
+    ROUND(
+        ((SELECT close FROM ohlcv_rn WHERE rn = (SELECT MIN(rn) FROM ohlcv_rn WHERE date > e.ed) + 5) -
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date <= e.ed))) /
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date <= e.ed)) * 100, 2) AS day5_close_pct
 FROM earnings_dates e
-WHERE (SELECT MIN(date) FROM ohlcv WHERE date > e.ed) IS NOT NULL
+WHERE (SELECT date FROM ohlcv_rn WHERE rn = (SELECT MIN(rn) FROM ohlcv_rn WHERE date > e.ed)) IS NOT NULL
+  AND (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MIN(rn) FROM ohlcv_rn WHERE date > e.ed) + 5) IS NOT NULL
 ORDER BY e.ed DESC
 LIMIT """ + str(limit)
 
-pre_market_query = """
-WITH ohlcv_raw AS (
-    SELECT DISTINCT date, open, close FROM read_parquet('""" + ohlcv_path + """')
-),
-ohlcv AS (
-    SELECT date, FIRST(open) AS open, FIRST(close) AS close
-    FROM ohlcv_raw GROUP BY date
-)
+pre_market_query = ohlcv_cte + """
 SELECT
     e.ed AS earning_date,
     e.session,
@@ -104,14 +111,21 @@ SELECT
     e.eps_est,
     e.eps_act,
     e.surprise,
-    ROUND(((SELECT open FROM ohlcv WHERE date = e.ed) -
-           (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date < e.ed))) /
-           (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date < e.ed)) * 100, 2) AS gap_pct,
-    ROUND(((SELECT close FROM ohlcv WHERE date = e.ed) -
-           (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date < e.ed))) /
-           (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date < e.ed)) * 100, 2) AS day_ret
+    ROUND(
+        ((SELECT open FROM ohlcv_rn WHERE date = e.ed) -
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed))) /
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) * 100, 2) AS day_open_pct,
+    ROUND(
+        ((SELECT close FROM ohlcv_rn WHERE date = e.ed) -
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed))) /
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) * 100, 2) AS day_close_pct,
+    ROUND(
+        ((SELECT close FROM ohlcv_rn WHERE rn = (SELECT rn FROM ohlcv_rn WHERE date = e.ed) + 5) -
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed))) /
+         (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) * 100, 2) AS day5_close_pct
 FROM earnings_dates e
-WHERE (SELECT date FROM ohlcv WHERE date = e.ed) IS NOT NULL
+WHERE (SELECT date FROM ohlcv_rn WHERE date = e.ed) IS NOT NULL
+  AND (SELECT close FROM ohlcv_rn WHERE rn = (SELECT rn FROM ohlcv_rn WHERE date = e.ed) + 5) IS NOT NULL
 ORDER BY e.ed DESC
 LIMIT """ + str(limit)
 
@@ -127,15 +141,8 @@ elif is_post:
     query = post_market_query
 else:
     # Mixed: detect per-row
-    query = """
-    WITH ohlcv_raw AS (
-        SELECT DISTINCT date, open, close FROM read_parquet('""" + ohlcv_path + """')
-    ),
-    ohlcv AS (
-        SELECT date, FIRST(open) AS open, FIRST(close) AS close
-        FROM ohlcv_raw GROUP BY date
-    ),
-    base AS (
+    query = ohlcv_cte + """
+    , base AS (
         SELECT
             e.ed,
             e.session,
@@ -143,53 +150,63 @@ else:
             e.eps_est,
             e.eps_act,
             e.surprise,
-            ROUND(((SELECT open FROM ohlcv WHERE date = e.ed) -
-                   (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date < e.ed))) /
-                   (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date < e.ed)) * 100, 2) AS gap_pct,
-            ROUND(((SELECT close FROM ohlcv WHERE date = e.ed) -
-                   (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date < e.ed))) /
-                   (SELECT close FROM ohlcv WHERE date = (SELECT MAX(date) FROM ohlcv WHERE date < e.ed)) * 100, 2) AS day_ret,
-            (SELECT date FROM ohlcv WHERE date = e.ed) AS has_same_day
+            ROUND(
+                ((SELECT open FROM ohlcv_rn WHERE date = e.ed) -
+                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed))) /
+                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) * 100, 2) AS day_open_pct,
+            ROUND(
+                ((SELECT close FROM ohlcv_rn WHERE date = e.ed) -
+                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed))) /
+                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) * 100, 2) AS day_close_pct,
+            ROUND(
+                ((SELECT close FROM ohlcv_rn WHERE rn = (SELECT rn FROM ohlcv_rn WHERE date = e.ed) + 5) -
+                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed))) /
+                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) * 100, 2) AS day5_close_pct,
+            (SELECT date FROM ohlcv_rn WHERE date = e.ed) AS has_same_day
         FROM earnings_dates e
     )
     SELECT
         ed AS earning_date,
         session,
         CASE WHEN session = 'pre_market' AND has_same_day IS NOT NULL THEN ed
-             ELSE (SELECT MIN(date) FROM ohlcv WHERE date > ed)
+             ELSE (SELECT MIN(date) FROM ohlcv_rn WHERE date > ed)
         END AS reaction_date,
-        eps_est, eps_act, surprise, gap_pct, day_ret
+        eps_est, eps_act, surprise, day_open_pct, day_close_pct, day5_close_pct
     FROM base
     WHERE (CASE WHEN session = 'pre_market' AND has_same_day IS NOT NULL THEN has_same_day
-                ELSE (SELECT MIN(date) FROM ohlcv WHERE date > ed) END) IS NOT NULL
+                ELSE (SELECT MIN(date) FROM ohlcv_rn WHERE date > ed) END) IS NOT NULL
+      AND day5_close_pct IS NOT NULL
     ORDER BY ed DESC
     LIMIT """ + str(limit)
 
 res = con.execute(query).fetchall()
 
-header = f"{'EarningDate':<14} {'Release':<13} {'ReactionDate':<14} {'EPS Est':<8} {'EPS Act':<8} {'Surp%':<7} {'Gap%':<7} {'Day Ret%':<8}"
+header = f"{'EarningDate':<14} {'Release':<13} {'ReactionDate':<14} {'EPS Est':<8} {'EPS Act':<8} {'Surp%':<7} {'DayOpen%':<9} {'DayClose%':<9} {'5DayClose%':<9}"
 print(f"\nPast {len(res)} post-earnings reactions for {symbol}")
 print("=" * len(header))
 print(header)
-print("-" * 81)
+print("-" * 91)
 
 pos = neg = 0
 max_up, max_down = -999.99, 999.99
 for r in res:
-    gap = r[6] if r[6] is not None else 0.0
-    dr = r[7] if r[7] is not None else 0.0
-    if dr > 0: pos += 1
+    do_pct = r[6] if r[6] is not None else 0.0
+    dc_pct = r[7] if r[7] is not None else 0.0
+    if dc_pct > 0: pos += 1
     else: neg += 1
-    max_up = max(max_up, dr)
-    max_down = min(max_down, dr)
+    max_up = max(max_up, dc_pct)
+    max_down = min(max_down, dc_pct)
     est = f'{r[3]:.2f}' if r[3] else 'N/A'
     act = f'{r[4]:.2f}' if r[4] else 'N/A'
     surp = f'{r[5]:+.2f}' if r[5] else 'N/A'
+    d5 = f'{r[8]:+.2f}%' if r[8] is not None else 'N/A'
     ed_dt = datetime.strptime(str(r[0]), '%Y-%m-%d')
     rd_dt = datetime.strptime(str(r[2]), '%Y-%m-%d')
-    print(f"{ed_dt.strftime('%m/%d/%Y'):<14} {r[1]:<13} {rd_dt.strftime('%m/%d/%Y'):<14} {est:<8} {act:<8} {surp:<7} {gap:<+6.2f}% {dr:<+6.2f}%")
+    do_str = f"{do_pct:+.2f}%"
+    dc_str = f"{dc_pct:+.2f}%"
+    print(f"{ed_dt.strftime('%m/%d/%Y'):<14} {r[1]:<13} {rd_dt.strftime('%m/%d/%Y'):<14} {est:<8} {act:<8} {surp:<7} {do_str:<9} {dc_str:<9} {d5:<9}")
 
-print("-" * 81)
+print("-" * 91)
 print(f"Positive reactions: {pos}  |  Negative reactions: {neg}")
 print(f"Max up move: {max_up:+.2f}%  |  Max down move: {max_down:+.2f}%")
 
