@@ -264,12 +264,10 @@ This is critical for measuring the correct price reaction — MSFT reports post-
 | Column | Type | Description |
 |--------|------|-------------|
 | `symbol` | `STRING` | Ticker |
-| `report_date` | `TIMESTAMPTZ` | Earnings release timestamp (America/New_York) |
+| `report_date` | `STRING` | Earnings release timestamp as ISO-8601 string (America/New_York) |
 | `eps_estimate` | `DOUBLE` | Consensus EPS estimate |
 | `eps_actual` | `DOUBLE` | Reported EPS |
 | `surprise_pct` | `DOUBLE` | (actual - estimate) / \|estimate\| × 100 |
-| `revenue_estimate` | `DOUBLE` | Consensus revenue estimate |
-| `revenue_actual` | `DOUBLE` | Reported revenue |
 | `market_session` | `STRING` | `pre_market`, `during_market`, or `post_market` |
 
 **Table: `local.stocks.income_statements`** (Iceberg)
