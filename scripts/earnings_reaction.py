@@ -46,7 +46,12 @@ else:
         eps_est = ed.loc[idx, 'EPS Estimate']
         eps_act = ed.loc[idx, 'Reported EPS']
         surprise = ed.loc[idx, 'Surprise(%)']
-        session = 'post_market' if dt.hour >= 16 else 'pre_market'
+        if dt.hour >= 16:
+            session = 'post_market'
+        elif dt.hour < 9 or (dt.hour == 9 and dt.minute < 30):
+            session = 'pre_market'
+        else:
+            session = 'during_market'
         con.execute(
             "INSERT INTO earnings_dates VALUES (?, ?, ?, ?, ?)",
             [dt.date(),
@@ -132,8 +137,9 @@ LIMIT """ + str(limit)
 # Determine if any recent earnings are pre_market vs post_market
 sample = con.execute("SELECT DISTINCT session FROM earnings_dates").fetchall()
 sessions = [r[0] for r in sample]
-is_pre = 'pre_market' in sessions and 'post_market' not in sessions
-is_post = 'post_market' in sessions and 'pre_market' not in sessions
+session_set = set(sessions)
+is_pre = session_set == {'pre_market'}
+is_post = session_set.issubset({'post_market', 'during_market'})
 
 if is_pre:
     query = pre_market_query
@@ -146,22 +152,19 @@ else:
         SELECT
             e.ed,
             e.session,
-            e.ed AS reaction_date,
             e.eps_est,
             e.eps_act,
             e.surprise,
-            ROUND(
-                ((SELECT open FROM ohlcv_rn WHERE date = e.ed) -
-                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed))) /
-                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) * 100, 2) AS day_open_pct,
-            ROUND(
-                ((SELECT close FROM ohlcv_rn WHERE date = e.ed) -
-                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed))) /
-                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) * 100, 2) AS day_close_pct,
-            ROUND(
-                ((SELECT close FROM ohlcv_rn WHERE rn = (SELECT rn FROM ohlcv_rn WHERE date = e.ed) + 5) -
-                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed))) /
-                 (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) * 100, 2) AS day5_close_pct,
+            -- same-day references (pre_market / during_market)
+            (SELECT open FROM ohlcv_rn WHERE date = e.ed) AS same_open,
+            (SELECT close FROM ohlcv_rn WHERE date = e.ed) AS same_close,
+            (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date < e.ed)) AS prev_close,
+            (SELECT rn FROM ohlcv_rn WHERE date = e.ed) AS same_rn,
+            -- next-day references (post_market)
+            (SELECT open FROM ohlcv_rn WHERE rn = (SELECT MIN(rn) FROM ohlcv_rn WHERE date > e.ed)) AS next_open,
+            (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MIN(rn) FROM ohlcv_rn WHERE date > e.ed)) AS next_close,
+            (SELECT close FROM ohlcv_rn WHERE rn = (SELECT MAX(rn) FROM ohlcv_rn WHERE date <= e.ed)) AS prev_close_incl,
+            (SELECT MIN(rn) FROM ohlcv_rn WHERE date > e.ed) AS next_rn,
             (SELECT date FROM ohlcv_rn WHERE date = e.ed) AS has_same_day
         FROM earnings_dates e
     )
@@ -171,11 +174,32 @@ else:
         CASE WHEN session = 'pre_market' AND has_same_day IS NOT NULL THEN ed
              ELSE (SELECT MIN(date) FROM ohlcv_rn WHERE date > ed)
         END AS reaction_date,
-        eps_est, eps_act, surprise, day_open_pct, day_close_pct, day5_close_pct
+        eps_est, eps_act, surprise,
+        ROUND(
+            CASE WHEN session = 'pre_market'
+                 THEN (same_open - prev_close) / prev_close * 100
+                 ELSE (next_open - prev_close_incl) / prev_close_incl * 100
+            END, 2
+        ) AS day_open_pct,
+        ROUND(
+            CASE WHEN session = 'pre_market'
+                 THEN (same_close - prev_close) / prev_close * 100
+                 ELSE (next_close - prev_close_incl) / prev_close_incl * 100
+            END, 2
+        ) AS day_close_pct,
+        ROUND(
+            CASE WHEN session = 'pre_market'
+                 THEN ((SELECT close FROM ohlcv_rn WHERE rn = same_rn + 5) - prev_close) / prev_close * 100
+                 ELSE ((SELECT close FROM ohlcv_rn WHERE rn = next_rn + 5) - prev_close_incl) / prev_close_incl * 100
+            END, 2
+        ) AS day5_close_pct
     FROM base
     WHERE (CASE WHEN session = 'pre_market' AND has_same_day IS NOT NULL THEN has_same_day
                 ELSE (SELECT MIN(date) FROM ohlcv_rn WHERE date > ed) END) IS NOT NULL
-      AND day5_close_pct IS NOT NULL
+      AND (CASE WHEN session = 'pre_market'
+                THEN ((SELECT close FROM ohlcv_rn WHERE rn = same_rn + 5) - prev_close) / prev_close * 100
+                ELSE ((SELECT close FROM ohlcv_rn WHERE rn = next_rn + 5) - prev_close_incl) / prev_close_incl * 100
+           END) IS NOT NULL
     ORDER BY ed DESC
     LIMIT """ + str(limit)
 
