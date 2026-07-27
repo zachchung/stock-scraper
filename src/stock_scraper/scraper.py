@@ -15,8 +15,12 @@ from pyspark.sql.functions import col, to_date
 WAREHOUSE_PATH = "/Users/ZacharyChung1/code/stock_scraper/data"
 ICEBERG_VERSION = "org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0"
 OHLCV_TABLE = "local.stocks.ohlcv"
+INTRADAY_TABLE = "local.stocks.ohlcv_intraday"
 EARNINGS_TABLE = "local.stocks.earnings_dates"
 INCOME_TABLE = "local.stocks.income_statements"
+
+INTRADAY_INTERVALS = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d", "30m": "60d", "60m": "730d", "1h": "730d"}
+DEFAULT_INTRADAY_INTERVAL = "1h"
 
 SPARK = None
 
@@ -124,6 +128,45 @@ def fetch_income_statements(ticker):
         if col_name not in pivoted.columns:
             pivoted[col_name] = float('nan')
     return pivoted
+
+def fetch_intraday(ticker, interval="1h", years=2):
+    period = INTRADAY_INTERVALS.get(interval, "730d")
+    stock = yf.Ticker(ticker)
+    hist = stock.history(period=period, interval=interval)
+    if hist.empty:
+        return None
+    df = hist.reset_index()[["Datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
+    df.columns = ["timestamp", "open", "high", "low", "close", "volume"]
+    if df["timestamp"].dt.tz is not None:
+        df["timestamp"] = df["timestamp"].dt.tz_convert("America/New_York")
+    df["symbol"] = ticker
+    df["interval"] = interval
+    return df
+
+def write_intraday_to_iceberg(df):
+    spark = get_spark()
+    sdf = spark.createDataFrame(df).dropDuplicates(["symbol", "timestamp", "interval"])
+    sdf.createOrReplaceTempView("batch")
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {INTRADAY_TABLE} (
+            symbol STRING,
+            timestamp TIMESTAMP,
+            open DOUBLE,
+            high DOUBLE,
+            low DOUBLE,
+            close DOUBLE,
+            volume LONG,
+            interval STRING
+        )
+        USING iceberg
+        PARTITIONED BY (symbol)
+    """)
+    spark.sql(f"""
+        MERGE INTO {INTRADAY_TABLE} t
+        USING batch b
+        ON t.symbol = b.symbol AND t.timestamp = b.timestamp AND t.interval = b.interval
+        WHEN NOT MATCHED THEN INSERT *
+    """)
 
 def write_to_iceberg(df):
     spark = get_spark()
@@ -236,6 +279,10 @@ def main():
     parser.add_argument("--years", type=int, default=5, help="Years of history to fetch")
     parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
     parser.add_argument("--incremental", action="store_true", help="Fetch only recent OHLCV days")
+    parser.add_argument("--intraday", action="store_true", help="Fetch intraday OHLCV data")
+    parser.add_argument("--interval", type=str, default=DEFAULT_INTRADAY_INTERVAL,
+                        choices=list(INTRADAY_INTERVALS.keys()),
+                        help="Intraday bar interval")
     parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates and income statements")
     args = parser.parse_args()
 
@@ -246,9 +293,10 @@ def main():
         tickers.append("VOO")
 
     do_ohlcv = args.backfill or args.incremental
+    do_intraday = args.intraday
     do_earnings = args.earnings
 
-    if not do_ohlcv and not do_earnings:
+    if not do_ohlcv and not do_intraday and not do_earnings:
         parser.print_help()
         sys.exit(1)
 
@@ -274,6 +322,17 @@ def main():
                 print(f"[{i}/{total}] OHLCV {ticker} ({label}) done", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] OHLCV {ticker} FAILED: {e}", file=sys.stderr, flush=True)
+
+    if do_intraday:
+        total = len(tickers)
+        for i, ticker in enumerate(tickers, 1):
+            try:
+                df = fetch_intraday(ticker, interval=args.interval, years=args.years)
+                if df is not None and not df.empty:
+                    write_intraday_to_iceberg(df)
+                print(f"[{i}/{total}] INTRADAY {ticker} ({args.interval}) done ({len(df) if df is not None else 0} bars)", flush=True)
+            except Exception as e:
+                print(f"[{i}/{total}] INTRADAY {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
     if do_earnings:
         total = len(tickers)

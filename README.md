@@ -427,7 +427,17 @@ MU gap-up days — average time to intraday peak (1h bars):
 
 ### Status
 
-Not yet implemented. The daily OHLCV pipeline (Iceberg + DuckDB) and MCP tooling provide the foundation — the intraday extension adds a new yfinance fetch routine and a single additional Parquet table.
+Implemented. Run with:
+
+```bash
+# Fetch 2 years of 1-hour bars for all S&P 500
+python src/stock_scraper/scraper.py --intraday --interval 1h --years 2
+
+# Fetch for a specific symbol
+python src/stock_scraper/scraper.py --intraday --tickers MU --interval 1h --years 1
+```
+
+The MCP server exposes two new tools — `get_intraday` (fetch bars) and `intraday_pattern` (analyze time-of-day patterns like gap-up peak distribution).
 
 ---
 

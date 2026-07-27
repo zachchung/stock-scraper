@@ -11,12 +11,14 @@ from fastmcp import FastMCP
 
 DATA_DIR = Path(os.environ.get("STOCK_DATA_DIR", "/data"))
 OHLCV_GLOB = str(DATA_DIR / "stocks/ohlcv/data/*/*.parquet")
+INTRADAY_GLOB = str(DATA_DIR / "stocks/ohlcv_intraday/data/*/*.parquet")
 
 mcp = FastMCP(
     "Stock Data Server",
     instructions=(
         "Query US stock data. Available views:\n"
         "- ohlcv: symbol, date, open, high, low, close, volume, source\n"
+        "- ohlcv_intraday: symbol, timestamp, open, high, low, close, volume, interval (1h, 30m, etc)\n"
         "- earnings_dates: symbol, report_date (ISO timestamp), eps_estimate, eps_actual, surprise_pct, market_session (pre_market|during_market|post_market)\n"
         "- income_statements: symbol, fiscal_date, total_revenue, gross_profit, operating_income, net_income, diluted_eps"
     ),
@@ -26,6 +28,16 @@ mcp = FastMCP(
 def get_conn():
     con = duckdb.connect()
     con.execute(f"CREATE VIEW ohlcv AS SELECT * FROM read_parquet('{OHLCV_GLOB}')")
+
+    intraday_path = str(DATA_DIR / "stocks/ohlcv_intraday")
+    if (DATA_DIR / "stocks/ohlcv_intraday/metadata").exists():
+        try:
+            con.execute("LOAD iceberg")
+            con.execute(f"CREATE VIEW ohlcv_intraday AS SELECT * FROM iceberg_scan('{intraday_path}')")
+        except Exception:
+            pass
+    elif list((DATA_DIR / "stocks/ohlcv_intraday/data").glob("*/*.parquet")):
+        con.execute(f"CREATE VIEW ohlcv_intraday AS SELECT * FROM read_parquet('{INTRADAY_GLOB}')")
 
     try:
         con.execute("LOAD iceberg")
@@ -209,6 +221,81 @@ def post_earnings_reaction(symbol: str, n: int = 10) -> str:
             WHERE rn = 1
             ORDER BY report_date DESC
             LIMIT {n}
+        """))
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        con.close()
+
+
+@mcp.tool()
+def get_intraday(symbol: str, interval: str = "1h", days: int = 60) -> str:
+    """Get intraday OHLCV bars for a ticker. Ordered by timestamp descending."""
+    con = get_conn()
+    try:
+        return fmt(con.sql(f"""
+            SELECT *
+            FROM ohlcv_intraday
+            WHERE symbol = '{symbol.upper()}'
+              AND interval = '{interval}'
+              AND timestamp >= CURRENT_DATE - INTERVAL {days} DAYS
+            ORDER BY timestamp DESC
+        """))
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        con.close()
+
+
+@mcp.tool()
+def intraday_pattern(
+    symbol: str,
+    condition: str = "gap_up",
+    interval: str = "1h",
+    gap_threshold_pct: float = 2.0,
+) -> str:
+    """Analyze intraday price patterns. Currently supports 'gap_up' condition:
+    finds the hour-bar distribution of when the intraday high occurs on gap-up
+    days (open > previous_close by gap_threshold_pct percent)."""
+    con = get_conn()
+    try:
+        return fmt(con.sql(f"""
+            WITH daily AS (
+                SELECT date, open, close,
+                       LAG(close) OVER (ORDER BY date) as prev_close
+                FROM ohlcv
+                WHERE symbol = '{symbol.upper()}'
+            ),
+            gap_days AS (
+                SELECT date, open, prev_close,
+                       ROUND((open / prev_close - 1) * 100, 2) as gap_pct
+                FROM daily
+                WHERE prev_close IS NOT NULL
+                  AND open > prev_close * (1 + {gap_threshold_pct}/100.0)
+            ),
+            hourly_rank AS (
+                SELECT
+                    i.timestamp::DATE as trade_date,
+                    i.high as bar_high,
+                    i.timestamp,
+                    EXTRACT(HOUR FROM i.timestamp) as bar_hour,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY i.symbol, i.timestamp::DATE
+                        ORDER BY i.high DESC
+                    ) as rn
+                FROM ohlcv_intraday i
+                WHERE i.symbol = '{symbol.upper()}'
+                  AND i.interval = '{interval}'
+                  AND i.timestamp::DATE IN (SELECT date FROM gap_days)
+            )
+            SELECT
+                bar_hour,
+                COUNT(*) as days_count,
+                ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 1) as pct
+            FROM hourly_rank
+            WHERE rn = 1
+            GROUP BY bar_hour
+            ORDER BY bar_hour
         """))
     except Exception as e:
         return f"Error: {e}"
