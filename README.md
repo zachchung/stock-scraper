@@ -324,6 +324,113 @@ The `post_earnings_reaction` tool joins `earnings_dates` with the existing `ohlc
 └──────────────┴───────────────┴──────────────┴────────────────┴────────┴────────┴──────────────┴─────────┘
 ```
 
+## Planned: Intraday / Hourly OHLCV Data
+
+### Motivation
+
+Daily OHLCV data captures the open, high, low, and close for the full trading session, but it can't answer *when* during the day key price levels were hit. For example, the MU gap-up analysis found that MU hits a higher price intraday on **100% of gap-up days**, with an average best move of +2.89% from open — but with only daily data, there's no way to know if that peak occurred 5 minutes after open or 5 minutes before close.
+
+Intraday data unlocks questions like:
+
+> *"When MU gaps up +3% at open, does the intraday high typically occur within the first 30 minutes, or does the stock grind higher through the session?"*
+
+> *"If I buy MU at the open on a gap-up day and set a 2% trailing stop, what percentage of days would I get stopped out before hitting the day's high?"*
+
+> *"What's the optimal time of day to sell MU after a gap-up open to maximize average return?"*
+
+### New Data Source
+
+yfinance supports intraday intervals via `Ticker.history(period="1mo", interval="1h")`. The available intervals are:
+
+| Interval | Max Period | Use Case |
+|----------|-----------|----------|
+| `1m` | 7 days | Ultra-short term |
+| `2m` | 60 days | Short term |
+| `5m` | 60 days | Short term |
+| `15m` | 60 days | Swing trading |
+| `30m` | 60 days | Swing trading |
+| `60m` (`1h`) | 730 days (2 years) | **Primary — captures intraday structure** |
+| `1d` | Max | Already ingested |
+
+For most strategy analysis, **1-hour bars** offer the best balance: enough granularity to determine time-of-day patterns while keeping storage manageable (~1 GB for all S&P 500 over 2 years, compared to ~50 GB+ for 1-minute data).
+
+### New Table
+
+**Table: `local.stocks.ohlcv_intraday`** (Iceberg)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `symbol` | `STRING` | Ticker |
+| `timestamp` | `TIMESTAMP` | Start of the bar (America/New_York) |
+| `open` | `DOUBLE` | Open price |
+| `high` | `DOUBLE` | High price |
+| `low` | `DOUBLE` | Low price |
+| `close` | `DOUBLE` | Close price |
+| `volume` | `BIGINT` | Volume |
+| `interval` | `STRING` | Bar size (`1h`, `30m`, etc.) |
+
+**Partitioning:** `(symbol, year, month)` — same scheme as the daily table, with an additional `interval` filter.
+
+### Ingestion
+
+New CLI flag `--intraday` added to `scraper.py`:
+
+```bash
+python src/stock_scraper/scraper.py --intraday --interval 1h --years 2
+python src/stock_scraper/scraper.py --intraday --tickers MU --interval 1h --years 1
+```
+
+Key design decisions:
+
+- **Fetches whole calendar months** (not incremental by day) since yfinance intraday history is returned in chunks.
+- **Stores multiple intervals** in the same table, differentiated by the `interval` column.
+- **Aligns bars to hour boundaries** — 10:00 AM bar runs 10:00–10:59 ET.
+
+### MCP Tools (planned)
+
+```python
+get_intraday(symbol: str, interval: str = "1h", days: int = 60) -> str
+  """Return intraday OHLCV bars for a ticker."""
+
+intraday_pattern(symbol: str, condition: str = "gap_up", interval: str = "1h") -> str
+  """Analyze intraday price patterns. E.g.:
+     - When does the intraday high typically occur on gap-up days?
+     - What's the average time-to-peak after open?
+     - How often does the close retrace more than 50% of the intraday range?
+  """
+```
+
+### Example Analysis
+
+With 1-hour bars, the MU gap-up question becomes answerable:
+
+```
+MU gap-up days — average time to intraday peak (1h bars):
+  Hour 0 (9:30-10:30): high reached 5/22 days (23%)
+  Hour 1 (10:30-11:30): high reached 8/22 days (36%)
+  Hour 2 (11:30-12:30): high reached 4/22 days (18%)
+  Hour 3 (12:30-13:30): high reached 3/22 days (14%)
+  Hour 4 (13:30-14:30): high reached 1/22 days (5%)
+  Hour 5 (14:30-15:30): high reached 1/22 days (5%)
+  Hour 6 (15:30-16:00): high reached 0/22 days (0%)
+
+  Peak concentration: 59% of days hit the intraday high within the first 2 hours.
+```
+
+### Storage Estimates (S&P 500, 2 years of 1h bars)
+
+| Component | Size |
+|-----------|------|
+| 1h bars (~6.5 bars/day × ~500 symbols × ~504 trading days) | ~1.6M rows, ~60 MB |
+| Iceberg metadata | ~5 MB |
+| **Total** | **~65 MB** |
+
+### Status
+
+Not yet implemented. The daily OHLCV pipeline (Iceberg + DuckDB) and MCP tooling provide the foundation — the intraday extension adds a new yfinance fetch routine and a single additional Parquet table.
+
+---
+
 ## Design Decisions
 
 ### Why no Docker?
