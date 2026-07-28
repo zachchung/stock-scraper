@@ -469,3 +469,10 @@ The MCP server runs natively as a Python process — no isolation needed since a
 - All data stays local — no cloud egress costs.
 - DuckDB reads Parquet files directly, so queries are fast without a full database setup.
 - The Iceberg layer enables schema evolution, time-travel queries, and transactional writes during ingestion.
+
+---
+yfinance docs:
+```
+import yfinance as yf
+help(yf.download)
+```
