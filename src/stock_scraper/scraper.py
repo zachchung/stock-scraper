@@ -129,13 +129,13 @@ def fetch_income_statements(ticker):
             pivoted[col_name] = float('nan')
     return pivoted
 
-def fetch_intraday(ticker, interval="1h", years=2, start_date=None):
+def fetch_intraday(ticker, interval="1h", years=2, start_date=None, prepost=False):
     stock = yf.Ticker(ticker)
     if start_date:
-        hist = stock.history(start=start_date.strftime("%Y-%m-%d"), interval=interval)
+        hist = stock.history(start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost)
     else:
         period = INTRADAY_INTERVALS.get(interval, "730d")
-        hist = stock.history(period=period, interval=interval)
+        hist = stock.history(period=period, interval=interval, prepost=prepost)
     if hist.empty:
         return None
     df = hist.reset_index()[["Datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
@@ -302,6 +302,8 @@ def main():
     parser.add_argument("--interval", type=str, default=DEFAULT_INTRADAY_INTERVAL,
                         choices=list(INTRADAY_INTERVALS.keys()),
                         help="Intraday bar interval")
+    parser.add_argument("--prepost", action="store_true", default=False,
+                        help="Include pre/post market data in intraday fetch (unreliable — yfinance artifact spikes)")
     parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates and income statements")
     args = parser.parse_args()
 
@@ -353,9 +355,9 @@ def main():
             try:
                 last_ts = latest_intraday_ts.get(ticker) if latest_intraday_ts else None
                 if last_ts is not None:
-                    df = fetch_intraday(ticker, interval=args.interval, start_date=last_ts)
+                    df = fetch_intraday(ticker, interval=args.interval, start_date=last_ts, prepost=args.prepost)
                 else:
-                    df = fetch_intraday(ticker, interval=args.interval, years=args.years)
+                    df = fetch_intraday(ticker, interval=args.interval, years=args.years, prepost=args.prepost)
                 if df is not None and not df.empty:
                     write_intraday_to_iceberg(df)
                 label = "incr" if last_ts is not None else "full"

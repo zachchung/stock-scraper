@@ -378,6 +378,8 @@ The `--intraday` flag added to `scraper.py` supports two modes:
 - **Full fetch** (`--intraday --years 2`): downloads the full available history for the given interval.
 - **Incremental** (`--intraday --incremental`): detects the latest timestamp already stored per symbol (via DuckDB) and fetches only rows after that date. Falls back to a full fetch for any symbol with no local data. The `MERGE INTO` upsert prevents duplicates on `(symbol, timestamp, interval)`.
 
+Pre/post market data is excluded by default (yfinance extended-hours data is unreliable). To include it, add `--prepost`.
+
 ```bash
 # Full fetch — 2 years of 1-hour bars for all S&P 500
 python src/stock_scraper/scraper.py --intraday --interval 1h --years 2
@@ -387,6 +389,9 @@ python src/stock_scraper/scraper.py --intraday --interval 1h --incremental
 
 # Specific symbol
 python src/stock_scraper/scraper.py --intraday --tickers MU --interval 1h --years 1
+
+# Include pre/post market data (unreliable — known yfinance artifacts)
+python src/stock_scraper/scraper.py --intraday --prepost
 ```
 
 Key design decisions:
@@ -435,7 +440,7 @@ MU gap-up days — average time to intraday peak (1h bars):
 
 ### Status
 
-Implemented. Supports full fetch and incremental load:
+Implemented. Supports full fetch and incremental load (regular hours only by default):
 
 ```bash
 # Full fetch — 2 years of 1-hour bars for all S&P 500
