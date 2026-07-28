@@ -129,10 +129,13 @@ def fetch_income_statements(ticker):
             pivoted[col_name] = float('nan')
     return pivoted
 
-def fetch_intraday(ticker, interval="1h", years=2):
-    period = INTRADAY_INTERVALS.get(interval, "730d")
+def fetch_intraday(ticker, interval="1h", years=2, start_date=None):
     stock = yf.Ticker(ticker)
-    hist = stock.history(period=period, interval=interval)
+    if start_date:
+        hist = stock.history(start=start_date.strftime("%Y-%m-%d"), interval=interval)
+    else:
+        period = INTRADAY_INTERVALS.get(interval, "730d")
+        hist = stock.history(period=period, interval=interval)
     if hist.empty:
         return None
     df = hist.reset_index()[["Datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
@@ -273,12 +276,28 @@ def get_latest_dates():
     finally:
         con.close()
 
+def get_latest_intraday_timestamps(interval=DEFAULT_INTRADAY_INTERVAL):
+    parquet_path = f"{WAREHOUSE_PATH}/stocks/ohlcv_intraday/data/**/*.parquet"
+    con = duckdb.connect()
+    try:
+        df = con.execute(f"""
+            SELECT symbol, MAX(timestamp) as last_timestamp
+            FROM read_parquet('{parquet_path}', union_by_name=true)
+            WHERE interval = '{interval}'
+            GROUP BY symbol
+        """).fetchdf()
+        return df.set_index('symbol')['last_timestamp'].to_dict()
+    except Exception:
+        return {}
+    finally:
+        con.close()
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--backfill", action="store_true", help="Backfill historical OHLCV data")
     parser.add_argument("--years", type=int, default=5, help="Years of history to fetch")
     parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
-    parser.add_argument("--incremental", action="store_true", help="Fetch only recent OHLCV days")
+    parser.add_argument("--incremental", action="store_true", help="Fetch only recent rows (daily or intraday)")
     parser.add_argument("--intraday", action="store_true", help="Fetch intraday OHLCV data")
     parser.add_argument("--interval", type=str, default=DEFAULT_INTRADAY_INTERVAL,
                         choices=list(INTRADAY_INTERVALS.keys()),
@@ -324,13 +343,23 @@ def main():
                 print(f"[{i}/{total}] OHLCV {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
     if do_intraday:
+        if args.incremental and not args.backfill:
+            latest_intraday_ts = get_latest_intraday_timestamps(args.interval)
+        else:
+            latest_intraday_ts = {}
+
         total = len(tickers)
         for i, ticker in enumerate(tickers, 1):
             try:
-                df = fetch_intraday(ticker, interval=args.interval, years=args.years)
+                last_ts = latest_intraday_ts.get(ticker) if latest_intraday_ts else None
+                if last_ts is not None:
+                    df = fetch_intraday(ticker, interval=args.interval, start_date=last_ts)
+                else:
+                    df = fetch_intraday(ticker, interval=args.interval, years=args.years)
                 if df is not None and not df.empty:
                     write_intraday_to_iceberg(df)
-                print(f"[{i}/{total}] INTRADAY {ticker} ({args.interval}) done ({len(df) if df is not None else 0} bars)", flush=True)
+                label = "incr" if last_ts is not None else "full"
+                print(f"[{i}/{total}] INTRADAY {ticker} ({args.interval}) {label} done ({len(df) if df is not None else 0} bars)", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] INTRADAY {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 

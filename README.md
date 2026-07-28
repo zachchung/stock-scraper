@@ -57,10 +57,10 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 
 ### Step 1: Data Ingestion Script
 
-[`scraper.py`](src/stock_scraper/scraper.py) fetches daily OHLCV for **all S&P 500 constituents** + **VOO** from **yfinance**, processes it with PySpark, and stores into Iceberg tables partitioned by symbol under `data/stocks/`. It supports two modes:
+[`scraper.py`](src/stock_scraper/scraper.py) fetches daily and intraday OHLCV for **all S&P 500 constituents** + **VOO** from **yfinance**, processes it with PySpark, and stores into Iceberg tables partitioned by symbol under `data/stocks/`. It supports two modes:
 
 - **Backfill** (`--backfill --years 5`): full historical download for the given year window.
-- **Incremental** (`--incremental`): detects the latest date already stored per symbol (via DuckDB) and fetches only rows after that date. Falls back to a 5-year backfill for any symbol with no local data.
+- **Incremental** (`--incremental`): detects the latest date/timestamp already stored per symbol (via DuckDB) and fetches only rows after that date. Falls back to a full fetch for any symbol with no local data. Works for both daily (`--incremental`) and intraday (`--intraday --incremental`).
 
 ### Step 2: Warehouse
 
@@ -373,16 +373,24 @@ For most strategy analysis, **1-hour bars** offer the best balance: enough granu
 
 ### Ingestion
 
-New CLI flag `--intraday` added to `scraper.py`:
+The `--intraday` flag added to `scraper.py` supports two modes:
+
+- **Full fetch** (`--intraday --years 2`): downloads the full available history for the given interval.
+- **Incremental** (`--intraday --incremental`): detects the latest timestamp already stored per symbol (via DuckDB) and fetches only rows after that date. Falls back to a full fetch for any symbol with no local data. The `MERGE INTO` upsert prevents duplicates on `(symbol, timestamp, interval)`.
 
 ```bash
+# Full fetch — 2 years of 1-hour bars for all S&P 500
 python src/stock_scraper/scraper.py --intraday --interval 1h --years 2
+
+# Incremental — fetch only new bars since last ingestion
+python src/stock_scraper/scraper.py --intraday --interval 1h --incremental
+
+# Specific symbol
 python src/stock_scraper/scraper.py --intraday --tickers MU --interval 1h --years 1
 ```
 
 Key design decisions:
 
-- **Fetches whole calendar months** (not incremental by day) since yfinance intraday history is returned in chunks.
 - **Stores multiple intervals** in the same table, differentiated by the `interval` column.
 - **Aligns bars to hour boundaries** — 10:00 AM bar runs 10:00–10:59 ET.
 
@@ -427,14 +435,14 @@ MU gap-up days — average time to intraday peak (1h bars):
 
 ### Status
 
-Implemented. Run with:
+Implemented. Supports full fetch and incremental load:
 
 ```bash
-# Fetch 2 years of 1-hour bars for all S&P 500
+# Full fetch — 2 years of 1-hour bars for all S&P 500
 python src/stock_scraper/scraper.py --intraday --interval 1h --years 2
 
-# Fetch for a specific symbol
-python src/stock_scraper/scraper.py --intraday --tickers MU --interval 1h --years 1
+# Incremental — fetch only new bars since last ingestion
+python src/stock_scraper/scraper.py --intraday --interval 1h --incremental
 ```
 
 The MCP server exposes two new tools — `get_intraday` (fetch bars) and `intraday_pattern` (analyze time-of-day patterns like gap-up peak distribution).
