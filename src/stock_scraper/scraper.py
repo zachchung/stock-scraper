@@ -14,7 +14,7 @@ from pyspark.sql.functions import col, to_date
 
 WAREHOUSE_PATH = "/Users/ZacharyChung1/code/stock_scraper/data"
 ICEBERG_VERSION = "org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0"
-OHLCV_TABLE = "local.stocks.ohlcv"
+OHLCV_TABLE_DAILY = "local.stocks.ohlcv_daily"
 INTRADAY_TABLE = "local.stocks.ohlcv_intraday"
 EARNINGS_TABLE = "local.stocks.earnings_dates"
 INCOME_TABLE = "local.stocks.income_statements"
@@ -181,7 +181,7 @@ def write_to_iceberg(df):
     sdf.createOrReplaceTempView("batch")
 
     spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {OHLCV_TABLE} (
+        CREATE TABLE IF NOT EXISTS {OHLCV_TABLE_DAILY} (
             symbol STRING,
             date DATE,
             open DOUBLE,
@@ -196,7 +196,7 @@ def write_to_iceberg(df):
     """)
 
     spark.sql(f"""
-        MERGE INTO {OHLCV_TABLE} t
+        MERGE INTO {OHLCV_TABLE_DAILY} t
         USING batch b
         ON t.symbol = b.symbol AND t.date = b.date
         WHEN NOT MATCHED THEN INSERT *
@@ -262,7 +262,7 @@ def write_income_to_iceberg(df):
     """)
 
 def get_latest_dates():
-    parquet_path = f"{WAREHOUSE_PATH}/stocks/ohlcv/data/*/*.parquet"
+    parquet_path = f"{WAREHOUSE_PATH}/stocks/ohlcv_daily/data/*/*.parquet"
     con = duckdb.connect()
     try:
         df = con.execute(f"""
