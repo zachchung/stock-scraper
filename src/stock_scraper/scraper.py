@@ -58,13 +58,14 @@ def get_sp500_tickers():
     df = pd.read_csv(pd.io.common.StringIO(resp.text))
     return sorted(df["Symbol"].tolist())
 
-def fetch_ohlcv_daily(ticker, years=5, start_date=None):
+def fetch_ohlcv_daily(ticker, years=None, start_date=None):
     if start_date:
         start = (start_date + timedelta(days=1)).strftime("%Y-%m-%d")
         end = datetime.today().strftime("%Y-%m-%d")
         hist = yf.download(ticker, start=start, end=end, auto_adjust=False)
     else:
-        hist = yf.download(ticker, period=f"{years}y", auto_adjust=False)
+        period = f"{years}y" if years else "max"
+        hist = yf.download(ticker, period=period, auto_adjust=False)
     if hist.empty:
         return None
     df = hist.reset_index()[["Date", "Open", "High", "Low", "Close", "Volume"]].copy()
@@ -73,11 +74,11 @@ def fetch_ohlcv_daily(ticker, years=5, start_date=None):
     df["source"] = "yfinance"
     return df
 
-def fetch_ohlcv_intraday(ticker, interval="1h", years=2, start_date=None, prepost=False):
+def fetch_ohlcv_intraday(ticker, interval="1h", years=None, start_date=None, prepost=False):
     if start_date:
         hist = yf.download(ticker, start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost, auto_adjust=False)
     else:
-        period = INTRADAY_INTERVALS.get(interval, "730d")
+        period = f"{years}y" if years else INTRADAY_INTERVALS.get(interval, "730d")
         hist = yf.download(ticker, period=period, interval=interval, prepost=prepost, auto_adjust=False)
     if hist.empty:
         return None
@@ -377,8 +378,8 @@ def get_latest_intraday_timestamps(interval=DEFAULT_INTRADAY_INTERVAL):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--daily", action="store_true", help="Backfill historical OHLCV data")
-    parser.add_argument("--days", type=int, default=1825, help="Days of daily history to fetch (default 1825 = ~5 years)")
-    parser.add_argument("--years", type=int, default=2, help="Years of intraday history to fetch (default 2)")
+    parser.add_argument("--days", type=int, help="Days of daily history to fetch (omit for all available)")
+    parser.add_argument("--years", type=int, help="Years of intraday history to fetch (omit for all available)")
     parser.add_argument("--incremental", action="store_true", help="Fetch only recent rows (daily or intraday)")
     parser.add_argument("--intraday", action="store_true", help="Fetch intraday OHLCV data")
     parser.add_argument("--interval", type=str, default=DEFAULT_INTRADAY_INTERVAL,
@@ -423,7 +424,7 @@ def main():
                 if last_date is not None:
                     df = fetch_ohlcv_daily(ticker, start_date=last_date)
                 else:
-                    df = fetch_ohlcv_daily(ticker, years=max(1, args.days // 365))
+                    df = fetch_ohlcv_daily(ticker, years=(args.days // 365) if args.days else None)
                 if df is not None and not df.empty:
                     write_ohlcv_daily_to_iceberg(df)
                 label = "incr" if last_date is not None else "full"
