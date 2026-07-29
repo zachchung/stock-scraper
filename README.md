@@ -59,12 +59,13 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 
 [`scraper.py`](src/stock_scraper/scraper.py) fetches daily and intraday OHLCV for **all S&P 500 constituents** + **VOO** from **yfinance**, processes it with PySpark, and stores into Iceberg tables partitioned by symbol under `data/stocks/`. It supports two modes:
 
-- **Backfill** (`--backfill --years 5`): full historical download for the given year window.
-- **Incremental** (`--incremental`): detects the latest date/timestamp already stored per symbol (via DuckDB) and fetches only rows after that date. Falls back to a full fetch for any symbol with no local data. Works for both daily (`--incremental`) and intraday (`--intraday --incremental`).
+- **Daily** (`--daily --years 5`): full historical download for daily OHLCV.
+- **Intraday** (`--intraday --interval 1h --years 2`): historical download for intraday bars.
+- **Incremental** (`--incremental`): detects the latest date/timestamp per symbol and fetches only rows after that date. Works with both `--daily` and `--intraday`.
 
 ### Step 2: Warehouse
 
-A local Apache Iceberg catalog is initialized at `data/` with the schema (`symbol`, `date`, `open`, `high`, `low`, `close`, `volume`, `source`). Historical data has already been backfilled; run `scraper.py --incremental` daily to refresh with only new rows.
+A local Apache Iceberg catalog is initialized at `data/` with table `local.stocks.ohlcv_daily` (schema: `symbol`, `date`, `open`, `high`, `low`, `close`, `volume`, `source`). Historical data has already been backfilled; run `scraper.py --daily --incremental` daily to refresh with only new rows.
 
 ### Step 3: FastMCP + DuckDB Server
 
@@ -195,8 +196,10 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # 3. Run data ingestion
-python src/stock_scraper/scraper.py --backfill --years 5   # initial backfill
-python src/stock_scraper/scraper.py --incremental           # daily refresh
+python src/stock_scraper/scraper.py --daily --years 5               # initial daily backfill
+python src/stock_scraper/scraper.py --daily --incremental           # daily refresh
+python src/stock_scraper/scraper.py --intraday --interval 1h --years 2  # intraday backfill
+python src/stock_scraper/scraper.py --intraday --incremental        # intraday refresh
 
 # 4. Start MCP server
 STOCK_DATA_DIR=~/code/stock_scraper/data python src/stock_scraper/mcp_server.py
@@ -356,7 +359,7 @@ For most strategy analysis, **1-hour bars** offer the best balance: enough granu
 
 ### New Table
 
-**Table: `local.stocks.ohlcv_intraday`** (Iceberg)
+**Table: `local.stocks.ohlcv_intraday`** (Iceberg, constant `OHLCV_TABLE_INTRADAY`)
 
 | Column | Type | Description |
 |--------|------|-------------|
