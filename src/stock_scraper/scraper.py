@@ -132,10 +132,10 @@ def fetch_income_statements(ticker):
 def fetch_intraday(ticker, interval="1h", years=2, start_date=None, prepost=False):
     stock = yf.Ticker(ticker)
     if start_date:
-        hist = stock.history(start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost)
+        hist = stock.history(start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost, auto_adjust=False)
     else:
         period = INTRADAY_INTERVALS.get(interval, "730d")
-        hist = stock.history(period=period, interval=interval, prepost=prepost)
+        hist = stock.history(period=period, interval=interval, prepost=prepost, auto_adjust=False)
     if hist.empty:
         return None
     df = hist.reset_index()[["Datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
