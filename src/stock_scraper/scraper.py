@@ -377,7 +377,8 @@ def get_latest_intraday_timestamps(interval=DEFAULT_INTRADAY_INTERVAL):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--daily", action="store_true", help="Backfill historical OHLCV data")
-    parser.add_argument("--years", type=int, default=5, help="Years of history to fetch")
+    parser.add_argument("--days", type=int, default=1825, help="Days of daily history to fetch (default 1825 = ~5 years)")
+    parser.add_argument("--years", type=int, default=2, help="Years of intraday history to fetch (default 2)")
     parser.add_argument("--incremental", action="store_true", help="Fetch only recent rows (daily or intraday)")
     parser.add_argument("--intraday", action="store_true", help="Fetch intraday OHLCV data")
     parser.add_argument("--interval", type=str, default=DEFAULT_INTRADAY_INTERVAL,
@@ -422,7 +423,7 @@ def main():
                 if last_date is not None:
                     df = fetch_ohlcv_daily(ticker, start_date=last_date)
                 else:
-                    df = fetch_ohlcv_daily(ticker, years=args.years)
+                    df = fetch_ohlcv_daily(ticker, years=max(1, args.days // 365))
                 if df is not None and not df.empty:
                     write_ohlcv_daily_to_iceberg(df)
                 label = "incr" if last_date is not None else "full"
