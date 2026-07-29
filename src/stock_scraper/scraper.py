@@ -15,7 +15,7 @@ from pyspark.sql.functions import col, to_date
 WAREHOUSE_PATH = "/Users/ZacharyChung1/code/stock_scraper/data"
 ICEBERG_VERSION = "org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0"
 OHLCV_TABLE_DAILY = "local.stocks.ohlcv_daily"
-INTRADAY_TABLE = "local.stocks.ohlcv_intraday"
+OHLCV_TABLE_INTRADAY = "local.stocks.ohlcv_intraday"
 EARNINGS_TABLE = "local.stocks.earnings_dates"
 INCOME_TABLE = "local.stocks.income_statements"
 
@@ -151,7 +151,7 @@ def write_intraday_to_iceberg(df):
     sdf = spark.createDataFrame(df).dropDuplicates(["symbol", "timestamp", "interval"])
     sdf.createOrReplaceTempView("batch")
     spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {INTRADAY_TABLE} (
+        CREATE TABLE IF NOT EXISTS {OHLCV_TABLE_INTRADAY} (
             symbol STRING,
             timestamp TIMESTAMP,
             open DOUBLE,
@@ -165,7 +165,7 @@ def write_intraday_to_iceberg(df):
         PARTITIONED BY (symbol)
     """)
     spark.sql(f"""
-        MERGE INTO {INTRADAY_TABLE} t
+        MERGE INTO {OHLCV_TABLE_INTRADAY} t
         USING batch b
         ON t.symbol = b.symbol AND t.timestamp = b.timestamp AND t.interval = b.interval
         WHEN NOT MATCHED THEN INSERT *
