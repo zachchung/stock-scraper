@@ -320,8 +320,11 @@ Once ingested, Claude can answer:
 - "What's the overall market sentiment? Show me the analyst consensus summary across all S&P 500 stocks."
 - "Compare AAPL's current analyst target mean upside to its historical forward returns." (joins with ohlcv)
 - "Find stocks where the current price is above the mean analyst target (negative upside)."
+- "For GOOGL, show current analyst consensus targets vs current price, and compare against historical accuracy: how often did past price targets get reached within 180 days, and what was the actual best/worst forward return?" (joins analyst_upgrades_downgrades with ohlcv)
 
-### Example Output
+### Example Outputs
+
+**Current consensus vs current price:**
 
 ```
  AAPL analyst targets (latest):
@@ -330,6 +333,16 @@ Once ingested, Claude can answer:
 ├────────┼────────────┼───────────┼──────────┼────────────┼──────────────┼─────────────────┼─────────────┤
 │ AAPL   │     340.08 │    400.00 │   215.00 │    319.72  │        -5.99 │              43 │ buy         │
 └────────┴────────────┴───────────┴──────────┴────────────┴──────────────┴─────────────────┴─────────────┘
+```
+
+**Historical accuracy: did past targets get hit?**
+
+```
+GOOGL analyst accuracy (688 past actions):
+  avg target upside: +361.4%   (many targets set years ago at much lower prices)
+  avg actual best 180d: +33.3%
+  avg actual worst 180d: -13.9%
+  targets hit within 180d: 63.8% of the time
 ```
 
 ## Planned: Intraday / Hourly OHLCV Data
