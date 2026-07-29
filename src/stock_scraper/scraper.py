@@ -60,6 +60,7 @@ def get_sp500_tickers():
     return sorted(df["Symbol"].tolist())
 
 def fetch_ohlcv_daily(ticker, period="max", start_date=None):
+    # start_date is for incremental load
     if start_date:
         start = (start_date + timedelta(days=1)).strftime("%Y-%m-%d")
         end = datetime.today().strftime("%Y-%m-%d")
@@ -75,6 +76,7 @@ def fetch_ohlcv_daily(ticker, period="max", start_date=None):
     return df
 
 def fetch_ohlcv_intraday(ticker, interval="1h", period="max", start_date=None, prepost=False):
+    # start_date is for incremental load
     if start_date:
         hist = yf.download(ticker, start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost, auto_adjust=False)
     else:
