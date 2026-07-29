@@ -287,10 +287,14 @@ Each `--analyst` run **appends** a new row per symbol, building a historical con
 ### Ingestion
 
 ```bash
-# Fetch analyst targets + upgrades/downgrades for all S&P 500
+# Consensus targets only (fast — appends a snapshot row per symbol)
+python src/stock_scraper/scraper.py --targets
+
+# Full: targets + upgrades/downgrades for all S&P 500
 python src/stock_scraper/scraper.py --analyst
 
-# Specific symbols
+# Specific symbols (either flag works)
+python src/stock_scraper/scraper.py --targets --tickers AAPL MSFT META
 python src/stock_scraper/scraper.py --analyst --tickers AAPL MSFT META
 ```
 

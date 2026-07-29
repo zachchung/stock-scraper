@@ -386,7 +386,8 @@ def main():
     parser.add_argument("--prepost", action="store_true", default=False,
                         help="Include pre/post market data in intraday fetch (unreliable — yfinance artifact spikes)")
     parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates and income statements")
-    parser.add_argument("--analyst", action="store_true", help="Fetch analyst price targets and upgrades/downgrades")
+    parser.add_argument("--targets", action="store_true", help="Fetch analyst consensus price targets only (snapshot, appended on each run)")
+    parser.add_argument("--analyst", action="store_true", help="Fetch analyst price targets AND upgrades/downgrades (both)")
     parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
     args = parser.parse_args()
 
@@ -399,9 +400,10 @@ def main():
     do_ohlcv_daily = args.daily
     do_ohlcv_intraday = args.intraday
     do_earnings = args.earnings
+    do_targets = args.targets
     do_analyst = args.analyst
 
-    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_analyst:
+    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_targets and not do_analyst:
         parser.print_help()
         sys.exit(1)
 
@@ -468,20 +470,22 @@ def main():
             except Exception as e:
                 print(f"[{i}/{total}] EARN {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
-    if do_analyst:
+    if do_targets or do_analyst:
         total = len(tickers)
         for i, ticker in enumerate(tickers, 1):
             try:
-                targets = fetch_analyst_targets(ticker)
-                if targets:
-                    write_analyst_targets_to_iceberg(targets)
-                udf = fetch_upgrades_downgrades(ticker)
-                if udf is not None and not udf.empty:
-                    write_upgrades_downgrades_to_iceberg(udf)
-                label = "targets"
-                if udf is not None:
-                    label += f" upgrades({len(udf)})"
-                print(f"[{i}/{total}] ANALYST {ticker} ({label}) done", flush=True)
+                parts = []
+                if do_targets or do_analyst:
+                    targets = fetch_analyst_targets(ticker)
+                    if targets:
+                        write_analyst_targets_to_iceberg(targets)
+                        parts.append(f"targets")
+                if do_analyst:
+                    udf = fetch_upgrades_downgrades(ticker)
+                    if udf is not None and not udf.empty:
+                        write_upgrades_downgrades_to_iceberg(udf)
+                        parts.append(f"upgrades({len(udf)})")
+                print(f"[{i}/{total}] ANALYST {ticker} ({' '.join(parts)}) done", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] ANALYST {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
