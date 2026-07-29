@@ -61,8 +61,8 @@ else:
              session]
         )
 
-ohlcv_path = f"{base_dir}/data/stocks/ohlcv/data/symbol={symbol}/*.parquet"
-has_ohlcv = os.path.isdir(f"{base_dir}/data/stocks/ohlcv/data/symbol={symbol}")
+ohlcv_path = f"{base_dir}/data/stocks/ohlcv_daily/data/symbol={symbol}/*.parquet"
+has_ohlcv = os.path.isdir(f"{base_dir}/data/stocks/ohlcv_daily/data/symbol={symbol}")
 if not has_ohlcv:
     print(f"No OHLCV data found for {symbol}")
     con.execute("DROP TABLE earnings_dates")

@@ -15,7 +15,7 @@ to find the optimal entry/exit range that maximizes completed sequential trades.
 ## Where data lives
 
 ```
-data/stocks/ohlcv/data/symbol=<TICKER>/*.parquet
+data/stocks/ohlcv_daily/data/symbol=<TICKER>/*.parquet
 ```
 
 ## Workflow
@@ -25,8 +25,8 @@ data/stocks/ohlcv/data/symbol=<TICKER>/*.parquet
    .venv/bin/python -c "
    import duckdb
    con = duckdb.connect()
-   rows = con.execute('''SELECT date, open, high, low, close
-     FROM read_parquet('data/stocks/ohlcv/data/symbol=<TICKER>/*.parquet')
+    rows = con.execute('''SELECT date, open, high, low, close
+      FROM read_parquet('data/stocks/ohlcv_daily/data/symbol=<TICKER>/*.parquet')
      ORDER BY date''').fetchdf().to_dict('records')
    "
    ```

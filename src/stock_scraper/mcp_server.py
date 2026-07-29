@@ -10,7 +10,7 @@ import duckdb
 from fastmcp import FastMCP
 
 DATA_DIR = Path(os.environ.get("STOCK_DATA_DIR", "/data"))
-OHLCV_GLOB = str(DATA_DIR / "stocks/ohlcv/data/*/*.parquet")
+OHLCV_GLOB = str(DATA_DIR / "stocks/ohlcv_daily/data/*/*.parquet")
 INTRADAY_GLOB = str(DATA_DIR / "stocks/ohlcv_intraday/data/*/*.parquet")
 
 mcp = FastMCP(
