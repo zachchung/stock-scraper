@@ -60,7 +60,7 @@ def fetch_ohlcv_daily(ticker, years=5, start_date=None):
     if start_date:
         start = (start_date + timedelta(days=1)).strftime("%Y-%m-%d")
         end = datetime.today().strftime("%Y-%m-%d")
-        hist = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False)
+        hist = yf.download(ticker, start=start, end=end, auto_adjust=False)
     else:
         stock = yf.Ticker(ticker)
         hist = stock.history(period=f"{years}y", auto_adjust=False)
