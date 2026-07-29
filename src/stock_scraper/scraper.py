@@ -63,7 +63,7 @@ def fetch_ohlcv(ticker, years=5, start_date=None):
         hist = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False)
     else:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period=f"{years}y")
+        hist = stock.history(period=f"{years}y", auto_adjust=False)
     if hist.empty:
         return None
     df = hist.reset_index()[["Date", "Open", "High", "Low", "Close", "Volume"]].copy()
