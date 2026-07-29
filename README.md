@@ -231,100 +231,105 @@ This project touches the modern data stack — Spark → Iceberg → Parquet →
 
 ---
 
-## Planned: Earnings Data Extension
+## Analyst Price Targets Extension
 
 ### Motivation
 
-Ingest earnings announcement dates and income statement data so the MCP server can answer questions like:
+Ingest analyst price targets so the MCP server can answer questions like:
 
-> *"Show me a table listing the past 10 MSFT post-earnings day reactions."*
+> *"What's the average analyst price target vs current price?"*
+>
+> *"How has the consensus target for AAPL changed over the last 6 months?"*
+>
+> *"Which analysts have upgraded/downgraded META recently, and what were their price targets?"*
 
-### New Data Source
+### Data Sources
 
 All data comes from **yfinance** — the same library already used for OHLCV:
 
-| Data | yfinance API | Frequency | Rows |
-|------|-------------|-----------|------|
-| Earnings Dates | `Ticker.earnings_dates` | Quarterly | ~20K (500 symbols × 40 quarters) |
-| Income Statements | `Ticker.quarterly_income_stmt` | Quarterly | ~20K |
-
-### Pre/Post Market Detection
-
-The `earnings_dates` index is a timezone-aware datetime (`America/New_York`), so the release session can be determined:
-
-| Timestamp (ET) | Market Session | Reaction Day |
-|---|---|---|
-| Before 09:30 | `pre_market` | Same trading day |
-| 09:30 – 16:00 | `during_market` | Same trading day |
-| After 16:00 | `post_market` | **Next** trading day |
-
-This is critical for measuring the correct price reaction — MSFT reports post-market at 16:00 ET, so its day-1 reaction is the next trading day's open-to-close return plus the overnight gap.
+| Data | yfinance API | Description |
+|------|-------------|-------------|
+| Consensus Targets | `Ticker.info` (currentPrice, targetHighPrice, targetLowPrice, targetMeanPrice, targetMedianPrice) | Current consensus snapshot per symbol |
+| Upgrades/Downgrades | `Ticker.upgrades_downgrades` | Historical individual analyst actions with price targets |
 
 ### New Tables
 
-**Table: `local.stocks.earnings_dates`** (Iceberg)
+**Table: `local.stocks.analyst_targets`** (Iceberg)
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `symbol` | `STRING` | Ticker |
-| `report_date` | `STRING` | Earnings release timestamp as ISO-8601 string (America/New_York) |
-| `eps_estimate` | `DOUBLE` | Consensus EPS estimate |
-| `eps_actual` | `DOUBLE` | Reported EPS |
-| `surprise_pct` | `DOUBLE` | (actual - estimate) / \|estimate\| × 100 |
-| `market_session` | `STRING` | `pre_market`, `during_market`, or `post_market` |
+| `current_price` | `DOUBLE` | Current stock price at fetch time |
+| `target_high` | `DOUBLE` | Highest analyst target |
+| `target_low` | `DOUBLE` | Lowest analyst target |
+| `target_mean` | `DOUBLE` | Mean (average) analyst target |
+| `target_median` | `DOUBLE` | Median analyst target |
+| `recommendation_mean` | `DOUBLE` | Mean recommendation (1=strong buy, 5=strong sell) |
+| `recommendation_key` | `STRING` | Text recommendation (buy, hold, etc.) |
+| `num_analysts` | `INT` | Number of analysts covering |
+| `fetched_at` | `STRING` | ISO-8601 timestamp of this snapshot |
 
-**Table: `local.stocks.income_statements`** (Iceberg)
+Each `--analyst` run **appends** a new row per symbol, building a historical consensus time series.
+
+**Table: `local.stocks.analyst_upgrades_downgrades`** (Iceberg)
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `symbol` | `STRING` | Ticker |
-| `fiscal_date` | `DATE` | Quarter-end date |
-| `total_revenue` | `DOUBLE` | Total revenue |
-| `gross_profit` | `DOUBLE` | Gross profit |
-| `operating_income` | `DOUBLE` | Operating income |
-| `net_income` | `DOUBLE` | Net income |
-| `diluted_eps` | `DOUBLE` | Diluted EPS |
-| `ebit` | `DOUBLE` | EBIT |
-| `ebitda` | `DOUBLE` | EBITDA |
+| `grade_date` | `STRING` | ISO-8601 timestamp of action |
+| `firm` | `STRING` | Analyst firm name |
+| `to_grade` | `STRING` | New rating (Buy, Hold, Sell, etc.) |
+| `from_grade` | `STRING` | Previous rating |
+| `action` | `STRING` | `main`, `up`, `down`, `reit`, `init` |
+| `price_target` | `DOUBLE` | New price target |
+| `prior_price_target` | `DOUBLE` | Previous price target |
 
 ### Ingestion
 
-New CLI flag `--earnings` added to `scraper.py`:
-
 ```bash
-python src/stock_scraper/scraper.py --earnings         # fetch earnings for all symbols
-python src/stock_scraper/scraper.py --earnings --tickers AAPL MSFT  # specific symbols
+# Fetch analyst targets + upgrades/downgrades for all S&P 500
+python src/stock_scraper/scraper.py --analyst
+
+# Specific symbols
+python src/stock_scraper/scraper.py --analyst --tickers AAPL MSFT META
 ```
 
-Runs in the same ticker loop as OHLCV, writing to separate Iceberg tables via `MERGE INTO`.
-
-### MCP Tools (planned)
+### MCP Tools
 
 ```python
-get_earnings(symbol: str, n: int = 10) -> str
-  """Quarterly earnings dates with EPS surprise for a ticker."""
+get_analyst_targets(symbol: str) -> str
+  """Latest consensus price targets for a ticker with upside/downside %."""
 
-post_earnings_reaction(symbol: str, n: int = 10) -> str
-  """Symbol's post-earnings day price reaction. Returns a table:
-     report_date, market_session, eps_surprise%, first_trading_day,
-     open, close, day1_return%, overnight_gap%."""
+analyst_targets_history(symbol: str, n: int = 20) -> str
+  """Historical consensus snapshots over time, one row per ingestion run."""
+
+analyst_target_history(symbol: str, limit: int = 50) -> str
+  """Historical individual analyst price target changes."""
+
+analyst_consensus_summary() -> str
+  """Aggregate summary across all symbols: avg mean upside, analyst coverage, etc."""
 ```
 
-The `post_earnings_reaction` tool joins `earnings_dates` with the existing `ohlcv` table, using the `market_session` flag to pick the correct reaction day.
+### Example Queries
+
+Once ingested, Claude can answer:
+
+- "What is the average analyst price target for AAPL vs its current price? Show the upside/downside percentages."
+- "How has the mean analyst target for TSLA changed over the past year? Show me the time series from analyst_targets."
+- "Which analysts recently upgraded AMZN and to what price target?"
+- "What's the overall market sentiment? Show me the analyst consensus summary across all S&P 500 stocks."
+- "Compare AAPL's current analyst target mean upside to its historical forward returns." (joins with ohlcv)
+- "Find stocks where the current price is above the mean analyst target (negative upside)."
 
 ### Example Output
 
 ```
- MSFT post-earnings reactions (last 5):
-┌──────────────┬───────────────┬──────────────┬────────────────┬────────┬────────┬──────────────┬─────────┐
-│ report_date  │ market_session│ eps_surprise%│ reaction_date  │ open   │ close  │ day1_return% │ gap%    │
-├──────────────┼───────────────┼──────────────┼────────────────┼────────┼────────┼──────────────┼─────────┤
-│ 2026-04-29   │ post_market   │         4.90 │ 2026-04-30     │ 468.21 │ 472.54 │        +0.92 │   -0.30 │
-│ 2026-01-28   │ post_market   │         5.69 │ 2026-01-29     │ 452.10 │ 458.30 │        +1.37 │   +0.50 │
-│ 2025-10-29   │ post_market   │         1.23 │ 2025-10-30     │ 439.80 │ 441.15 │        +0.31 │   -0.10 │
-│ 2025-07-29   │ post_market   │         6.80 │ 2025-07-30     │ 465.50 │ 470.20 │        +1.01 │   +0.80 │
-│ 2025-04-29   │ post_market   │         3.15 │ 2025-04-30     │ 428.90 │ 425.40 │        -0.82 │   -0.60 │
-└──────────────┴───────────────┴──────────────┴────────────────┴────────┴────────┴──────────────┴─────────┘
+ AAPL analyst targets (latest):
+┌────────┬────────────┬───────────┬──────────┬────────────┬──────────────┬─────────────────┬─────────────┐
+│ symbol │ cur_price  │ tgt_high  │ tgt_low  │ tgt_mean   │ mean_upside% │ num_analysts    │ reco        │
+├────────┼────────────┼───────────┼──────────┼────────────┼──────────────┼─────────────────┼─────────────┤
+│ AAPL   │     340.08 │    400.00 │   215.00 │    319.72  │        -5.99 │              43 │ buy         │
+└────────┴────────────┴───────────┴──────────┴────────────┴──────────────┴─────────────────┴─────────────┘
 ```
 
 ## Planned: Intraday / Hourly OHLCV Data

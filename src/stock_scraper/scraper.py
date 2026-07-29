@@ -18,6 +18,8 @@ OHLCV_TABLE_DAILY = "local.stocks.ohlcv_daily"
 OHLCV_TABLE_INTRADAY = "local.stocks.ohlcv_intraday"
 EARNINGS_TABLE = "local.stocks.earnings_dates"
 INCOME_TABLE = "local.stocks.income_statements"
+ANALYST_TARGETS_TABLE = "local.stocks.analyst_targets"
+ANALYST_UPGRADES_TABLE = "local.stocks.analyst_upgrades_downgrades"
 
 INTRADAY_INTERVALS = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d", "30m": "60d", "60m": "730d", "1h": "730d"}
 DEFAULT_INTRADAY_INTERVAL = "1h"
@@ -144,6 +146,35 @@ def fetch_income_statements(ticker):
             pivoted[col_name] = float('nan')
     return pivoted
 
+def fetch_analyst_targets(ticker):
+    stock = yf.Ticker(ticker)
+    info = stock.info
+    targets = {}
+    targets["symbol"] = ticker
+    targets["current_price"] = info.get("currentPrice")
+    targets["target_high"] = info.get("targetHighPrice")
+    targets["target_low"] = info.get("targetLowPrice")
+    targets["target_mean"] = info.get("targetMeanPrice")
+    targets["target_median"] = info.get("targetMedianPrice")
+    targets["recommendation_mean"] = info.get("recommendationMean")
+    targets["recommendation_key"] = info.get("recommendationKey")
+    targets["num_analysts"] = info.get("numberOfAnalystOpinions")
+    targets["fetched_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S%z")
+    return targets
+
+def fetch_upgrades_downgrades(ticker):
+    stock = yf.Ticker(ticker)
+    ud = stock.upgrades_downgrades
+    if ud is None or ud.empty:
+        return None
+    df = ud.reset_index().copy()
+    df.columns = ["grade_date", "firm", "to_grade", "from_grade", "action",
+                   "price_target_action", "price_target", "prior_price_target"]
+    df["grade_date"] = df["grade_date"].dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+    df["symbol"] = ticker
+    return df[["symbol", "grade_date", "firm", "to_grade", "from_grade",
+               "action", "price_target", "prior_price_target"]]
+
 def write_ohlcv_daily_to_iceberg(df):
     spark = get_spark()
     sdf = (
@@ -259,6 +290,59 @@ def write_income_to_iceberg(df):
         WHEN NOT MATCHED THEN INSERT *
     """)
 
+def write_analyst_targets_to_iceberg(targets_dict):
+    spark = get_spark()
+    df = pd.DataFrame([targets_dict])
+    sdf = spark.createDataFrame(df)
+    sdf.createOrReplaceTempView("batch")
+
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {ANALYST_TARGETS_TABLE} (
+            symbol STRING,
+            current_price DOUBLE,
+            target_high DOUBLE,
+            target_low DOUBLE,
+            target_mean DOUBLE,
+            target_median DOUBLE,
+            recommendation_mean DOUBLE,
+            recommendation_key STRING,
+            num_analysts INT,
+            fetched_at STRING
+        )
+        USING iceberg
+        PARTITIONED BY (symbol)
+    """)
+
+    spark.sql(f"""
+        INSERT INTO {ANALYST_TARGETS_TABLE}
+        SELECT * FROM batch
+    """)
+
+def write_upgrades_downgrades_to_iceberg(df):
+    spark = get_spark()
+    sdf = spark.createDataFrame(df).dropDuplicates(["symbol", "grade_date", "firm"])
+    sdf.createOrReplaceTempView("batch")
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {ANALYST_UPGRADES_TABLE} (
+            symbol STRING,
+            grade_date STRING,
+            firm STRING,
+            to_grade STRING,
+            from_grade STRING,
+            action STRING,
+            price_target DOUBLE,
+            prior_price_target DOUBLE
+        )
+        USING iceberg
+        PARTITIONED BY (symbol)
+    """)
+    spark.sql(f"""
+        MERGE INTO {ANALYST_UPGRADES_TABLE} t
+        USING batch b
+        ON t.symbol = b.symbol AND t.grade_date = b.grade_date AND t.firm = b.firm
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+
 def get_latest_dates():
     parquet_path = f"{WAREHOUSE_PATH}/stocks/ohlcv_daily/data/*/*.parquet"
     con = duckdb.connect()
@@ -302,6 +386,7 @@ def main():
     parser.add_argument("--prepost", action="store_true", default=False,
                         help="Include pre/post market data in intraday fetch (unreliable — yfinance artifact spikes)")
     parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates and income statements")
+    parser.add_argument("--analyst", action="store_true", help="Fetch analyst price targets and upgrades/downgrades")
     parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
     args = parser.parse_args()
 
@@ -314,8 +399,9 @@ def main():
     do_ohlcv_daily = args.daily
     do_ohlcv_intraday = args.intraday
     do_earnings = args.earnings
+    do_analyst = args.analyst
 
-    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings:
+    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_analyst:
         parser.print_help()
         sys.exit(1)
 
@@ -381,6 +467,23 @@ def main():
                 print(f"[{i}/{total}] EARN {ticker} ({label.strip()}) done", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] EARN {ticker} FAILED: {e}", file=sys.stderr, flush=True)
+
+    if do_analyst:
+        total = len(tickers)
+        for i, ticker in enumerate(tickers, 1):
+            try:
+                targets = fetch_analyst_targets(ticker)
+                if targets:
+                    write_analyst_targets_to_iceberg(targets)
+                udf = fetch_upgrades_downgrades(ticker)
+                if udf is not None and not udf.empty:
+                    write_upgrades_downgrades_to_iceberg(udf)
+                label = "targets"
+                if udf is not None:
+                    label += f" upgrades({len(udf)})"
+                print(f"[{i}/{total}] ANALYST {ticker} ({label}) done", flush=True)
+            except Exception as e:
+                print(f"[{i}/{total}] ANALYST {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
     elapsed = datetime.now() - start
     print(f"\nCompleted in {elapsed}", flush=True)

@@ -20,7 +20,9 @@ mcp = FastMCP(
         "- ohlcv: symbol, date, open, high, low, close, volume, source\n"
         "- ohlcv_intraday: symbol, timestamp, open, high, low, close, volume, interval (1h, 30m, etc)\n"
         "- earnings_dates: symbol, report_date (ISO timestamp), eps_estimate, eps_actual, surprise_pct, market_session (pre_market|during_market|post_market)\n"
-        "- income_statements: symbol, fiscal_date, total_revenue, gross_profit, operating_income, net_income, diluted_eps"
+        "- income_statements: symbol, fiscal_date, total_revenue, gross_profit, operating_income, net_income, diluted_eps\n"
+        "- analyst_targets: current consensus price targets per symbol (high/low/mean/median)\n"
+        "- analyst_upgrades_downgrades: historical individual analyst actions with price targets"
     ),
 )
 
@@ -47,6 +49,12 @@ def get_conn():
         income_path = str(DATA_DIR / "stocks/income_statements")
         if (DATA_DIR / "stocks/income_statements/metadata").exists():
             con.execute(f"CREATE VIEW income_statements AS SELECT * FROM iceberg_scan('{income_path}')")
+        analyst_targets_path = str(DATA_DIR / "stocks/analyst_targets")
+        if (DATA_DIR / "stocks/analyst_targets/metadata").exists():
+            con.execute(f"CREATE VIEW analyst_targets AS SELECT * FROM iceberg_scan('{analyst_targets_path}')")
+        analyst_upgrades_path = str(DATA_DIR / "stocks/analyst_upgrades_downgrades")
+        if (DATA_DIR / "stocks/analyst_upgrades_downgrades/metadata").exists():
+            con.execute(f"CREATE VIEW analyst_upgrades_downgrades AS SELECT * FROM iceberg_scan('{analyst_upgrades_path}')")
     except Exception:
         pass
 
@@ -221,6 +229,112 @@ def post_earnings_reaction(symbol: str, n: int = 10) -> str:
             WHERE rn = 1
             ORDER BY report_date DESC
             LIMIT {n}
+        """))
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        con.close()
+
+
+@mcp.tool()
+def get_analyst_targets(symbol: str) -> str:
+    """Get the latest analyst price targets for a ticker: high/low/mean/median vs current price."""
+    con = get_conn()
+    try:
+        return fmt(con.sql(f"""
+            WITH latest AS (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY fetched_at DESC) as rn
+                FROM analyst_targets
+                WHERE symbol = '{symbol.upper()}'
+            )
+            SELECT symbol,
+                   current_price,
+                   target_high,
+                   target_low,
+                   target_mean,
+                   target_median,
+                   ROUND((target_mean - current_price) / current_price * 100, 2) as mean_upside_pct,
+                   ROUND((target_median - current_price) / current_price * 100, 2) as median_upside_pct,
+                   ROUND((target_high - current_price) / current_price * 100, 2) as max_upside_pct,
+                   ROUND((target_low - current_price) / current_price * 100, 2) as min_upside_pct,
+                   num_analysts,
+                   recommendation_key,
+                   fetched_at
+            FROM latest
+            WHERE rn = 1
+        """))
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        con.close()
+
+
+@mcp.tool()
+def analyst_targets_history(symbol: str, n: int = 20) -> str:
+    """Historical consensus snapshots over time (one row per ingestion run)."""
+    con = get_conn()
+    try:
+        return fmt(con.sql(f"""
+            SELECT fetched_at,
+                   current_price,
+                   target_high,
+                   target_low,
+                   target_mean,
+                   target_median,
+                   num_analysts,
+                   ROUND((target_mean - current_price) / current_price * 100, 2) as mean_upside_pct
+            FROM analyst_targets
+            WHERE symbol = '{symbol.upper()}'
+            ORDER BY fetched_at DESC
+            LIMIT {n}
+        """))
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        con.close()
+
+
+@mcp.tool()
+def analyst_target_history(symbol: str, limit: int = 50) -> str:
+    """Historical analyst price target changes from upgrades/downgrades."""
+    con = get_conn()
+    try:
+        return fmt(con.sql(f"""
+            SELECT grade_date,
+                   firm,
+                   to_grade,
+                   from_grade,
+                   action,
+                   price_target,
+                   prior_price_target,
+                   ROUND((price_target - prior_price_target) / NULLIF(prior_price_target, 0) * 100, 2) as target_change_pct
+            FROM analyst_upgrades_downgrades
+            WHERE symbol = '{symbol.upper()}'
+              AND price_target IS NOT NULL
+              AND price_target > 0
+            ORDER BY grade_date DESC
+            LIMIT {limit}
+        """))
+    except Exception as e:
+        return f"Error: {e}"
+    finally:
+        con.close()
+
+
+@mcp.tool()
+def analyst_consensus_summary() -> str:
+    """Summary of analyst targets across all symbols: mean upside, count of analysts, etc."""
+    con = get_conn()
+    try:
+        return fmt(con.sql("""
+            SELECT COUNT(*) as symbols_with_targets,
+                   ROUND(AVG((target_mean - current_price) / current_price * 100), 2) as avg_mean_upside_pct,
+                   ROUND(AVG((target_median - current_price) / current_price * 100), 2) as avg_median_upside_pct,
+                   ROUND(AVG(num_analysts), 1) as avg_num_analysts,
+                   ROUND(AVG(target_high - current_price), 2) as avg_upside_to_high
+            FROM analyst_targets
+            WHERE current_price IS NOT NULL AND target_mean IS NOT NULL
         """))
     except Exception as e:
         return f"Error: {e}"
