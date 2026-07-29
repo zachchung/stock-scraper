@@ -56,7 +56,7 @@ def get_sp500_tickers():
     df = pd.read_csv(pd.io.common.StringIO(resp.text))
     return sorted(df["Symbol"].tolist())
 
-def fetch_ohlcv(ticker, years=5, start_date=None):
+def fetch_ohlcv_daily(ticker, years=5, start_date=None):
     if start_date:
         start = (start_date + timedelta(days=1)).strftime("%Y-%m-%d")
         end = datetime.today().strftime("%Y-%m-%d")
@@ -70,6 +70,23 @@ def fetch_ohlcv(ticker, years=5, start_date=None):
     df.columns = ["date", "open", "high", "low", "close", "volume"]
     df["symbol"] = ticker
     df["source"] = "yfinance"
+    return df
+
+def fetch_ohlcv_intraday(ticker, interval="1h", years=2, start_date=None, prepost=False):
+    stock = yf.Ticker(ticker)
+    if start_date:
+        hist = stock.history(start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost, auto_adjust=False)
+    else:
+        period = INTRADAY_INTERVALS.get(interval, "730d")
+        hist = stock.history(period=period, interval=interval, prepost=prepost, auto_adjust=False)
+    if hist.empty:
+        return None
+    df = hist.reset_index()[["Datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
+    df.columns = ["timestamp", "open", "high", "low", "close", "volume"]
+    if df["timestamp"].dt.tz is not None:
+        df["timestamp"] = df["timestamp"].dt.tz_convert("America/New_York")
+    df["symbol"] = ticker
+    df["interval"] = interval
     return df
 
 def fetch_earnings(ticker):
@@ -129,49 +146,7 @@ def fetch_income_statements(ticker):
             pivoted[col_name] = float('nan')
     return pivoted
 
-def fetch_intraday(ticker, interval="1h", years=2, start_date=None, prepost=False):
-    stock = yf.Ticker(ticker)
-    if start_date:
-        hist = stock.history(start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost, auto_adjust=False)
-    else:
-        period = INTRADAY_INTERVALS.get(interval, "730d")
-        hist = stock.history(period=period, interval=interval, prepost=prepost, auto_adjust=False)
-    if hist.empty:
-        return None
-    df = hist.reset_index()[["Datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
-    df.columns = ["timestamp", "open", "high", "low", "close", "volume"]
-    if df["timestamp"].dt.tz is not None:
-        df["timestamp"] = df["timestamp"].dt.tz_convert("America/New_York")
-    df["symbol"] = ticker
-    df["interval"] = interval
-    return df
-
-def write_intraday_to_iceberg(df):
-    spark = get_spark()
-    sdf = spark.createDataFrame(df).dropDuplicates(["symbol", "timestamp", "interval"])
-    sdf.createOrReplaceTempView("batch")
-    spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {OHLCV_TABLE_INTRADAY} (
-            symbol STRING,
-            timestamp TIMESTAMP,
-            open DOUBLE,
-            high DOUBLE,
-            low DOUBLE,
-            close DOUBLE,
-            volume LONG,
-            interval STRING
-        )
-        USING iceberg
-        PARTITIONED BY (symbol)
-    """)
-    spark.sql(f"""
-        MERGE INTO {OHLCV_TABLE_INTRADAY} t
-        USING batch b
-        ON t.symbol = b.symbol AND t.timestamp = b.timestamp AND t.interval = b.interval
-        WHEN NOT MATCHED THEN INSERT *
-    """)
-
-def write_to_iceberg(df):
+def write_ohlcv_daily_to_iceberg(df):
     spark = get_spark()
     sdf = (
         spark.createDataFrame(df)
@@ -199,6 +174,31 @@ def write_to_iceberg(df):
         MERGE INTO {OHLCV_TABLE_DAILY} t
         USING batch b
         ON t.symbol = b.symbol AND t.date = b.date
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+
+def write_ohlcv_intraday_to_iceberg(df):
+    spark = get_spark()
+    sdf = spark.createDataFrame(df).dropDuplicates(["symbol", "timestamp", "interval"])
+    sdf.createOrReplaceTempView("batch")
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {OHLCV_TABLE_INTRADAY} (
+            symbol STRING,
+            timestamp TIMESTAMP,
+            open DOUBLE,
+            high DOUBLE,
+            low DOUBLE,
+            close DOUBLE,
+            volume LONG,
+            interval STRING
+        )
+        USING iceberg
+        PARTITIONED BY (symbol)
+    """)
+    spark.sql(f"""
+        MERGE INTO {OHLCV_TABLE_INTRADAY} t
+        USING batch b
+        ON t.symbol = b.symbol AND t.timestamp = b.timestamp AND t.interval = b.interval
         WHEN NOT MATCHED THEN INSERT *
     """)
 
@@ -294,9 +294,8 @@ def get_latest_intraday_timestamps(interval=DEFAULT_INTRADAY_INTERVAL):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backfill", action="store_true", help="Backfill historical OHLCV data")
+    parser.add_argument("--daily", action="store_true", help="Backfill historical OHLCV data")
     parser.add_argument("--years", type=int, default=5, help="Years of history to fetch")
-    parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
     parser.add_argument("--incremental", action="store_true", help="Fetch only recent rows (daily or intraday)")
     parser.add_argument("--intraday", action="store_true", help="Fetch intraday OHLCV data")
     parser.add_argument("--interval", type=str, default=DEFAULT_INTRADAY_INTERVAL,
@@ -305,6 +304,7 @@ def main():
     parser.add_argument("--prepost", action="store_true", default=False,
                         help="Include pre/post market data in intraday fetch (unreliable — yfinance artifact spikes)")
     parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates and income statements")
+    parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
     args = parser.parse_args()
 
     if args.tickers:
@@ -313,18 +313,18 @@ def main():
         tickers = get_sp500_tickers()
         tickers.append("VOO")
 
-    do_ohlcv = args.backfill or args.incremental
-    do_intraday = args.intraday
+    do_ohlcv_daily = args.daily
+    do_ohlcv_intraday = args.intraday
     do_earnings = args.earnings
 
-    if not do_ohlcv and not do_intraday and not do_earnings:
+    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings:
         parser.print_help()
         sys.exit(1)
 
     start = datetime.now()
 
-    if do_ohlcv:
-        if args.incremental and not args.backfill:
+    if do_ohlcv_daily:
+        if args.incremental:
             latest_dates = get_latest_dates()
         else:
             latest_dates = {}
@@ -334,18 +334,18 @@ def main():
             try:
                 last_date = latest_dates.get(ticker) if latest_dates else None
                 if last_date is not None:
-                    df = fetch_ohlcv(ticker, start_date=last_date)
+                    df = fetch_ohlcv_daily(ticker, start_date=last_date)
                 else:
-                    df = fetch_ohlcv(ticker, years=args.years)
+                    df = fetch_ohlcv_daily(ticker, years=args.years)
                 if df is not None and not df.empty:
-                    write_to_iceberg(df)
+                    write_ohlcv_daily_to_iceberg(df)
                 label = "incr" if last_date is not None else "full"
                 print(f"[{i}/{total}] OHLCV {ticker} ({label}) done", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] OHLCV {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
-    if do_intraday:
-        if args.incremental and not args.backfill:
+    if do_ohlcv_intraday:
+        if args.incremental:
             latest_intraday_ts = get_latest_intraday_timestamps(args.interval)
         else:
             latest_intraday_ts = {}
@@ -355,11 +355,11 @@ def main():
             try:
                 last_ts = latest_intraday_ts.get(ticker) if latest_intraday_ts else None
                 if last_ts is not None:
-                    df = fetch_intraday(ticker, interval=args.interval, start_date=last_ts, prepost=args.prepost)
+                    df = fetch_ohlcv_intraday(ticker, interval=args.interval, start_date=last_ts, prepost=args.prepost)
                 else:
-                    df = fetch_intraday(ticker, interval=args.interval, years=args.years, prepost=args.prepost)
+                    df = fetch_ohlcv_intraday(ticker, interval=args.interval, years=args.years, prepost=args.prepost)
                 if df is not None and not df.empty:
-                    write_intraday_to_iceberg(df)
+                    write_ohlcv_intraday_to_iceberg(df)
                 label = "incr" if last_ts is not None else "full"
                 print(f"[{i}/{total}] INTRADAY {ticker} ({args.interval}) {label} done ({len(df) if df is not None else 0} bars)", flush=True)
             except Exception as e:
