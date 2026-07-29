@@ -62,8 +62,7 @@ def fetch_ohlcv_daily(ticker, years=5, start_date=None):
         end = datetime.today().strftime("%Y-%m-%d")
         hist = yf.download(ticker, start=start, end=end, auto_adjust=False)
     else:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period=f"{years}y", auto_adjust=False)
+        hist = yf.download(ticker, period=f"{years}y", auto_adjust=False)
     if hist.empty:
         return None
     df = hist.reset_index()[["Date", "Open", "High", "Low", "Close", "Volume"]].copy()
@@ -73,12 +72,11 @@ def fetch_ohlcv_daily(ticker, years=5, start_date=None):
     return df
 
 def fetch_ohlcv_intraday(ticker, interval="1h", years=2, start_date=None, prepost=False):
-    stock = yf.Ticker(ticker)
     if start_date:
-        hist = stock.history(start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost, auto_adjust=False)
+        hist = yf.download(ticker, start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost, auto_adjust=False)
     else:
         period = INTRADAY_INTERVALS.get(interval, "730d")
-        hist = stock.history(period=period, interval=interval, prepost=prepost, auto_adjust=False)
+        hist = yf.download(ticker, period=period, interval=interval, prepost=prepost, auto_adjust=False)
     if hist.empty:
         return None
     df = hist.reset_index()[["Datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
