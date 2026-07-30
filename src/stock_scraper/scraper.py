@@ -254,20 +254,13 @@ def write_earnings_to_iceberg(df):
         PARTITIONED BY (symbol)
     """)
 
+    spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
     spark.sql(f"""
-        UPDATE {EARNINGS_TABLE} t
-        SET eps_estimate = (SELECT b.eps_estimate FROM batch b WHERE b.symbol = t.symbol AND b.report_date = t.report_date),
-            eps_actual = (SELECT b.eps_actual FROM batch b WHERE b.symbol = t.symbol AND b.report_date = t.report_date),
-            surprise_pct = (SELECT b.surprise_pct FROM batch b WHERE b.symbol = t.symbol AND b.report_date = t.report_date),
-            market_session = (SELECT b.market_session FROM batch b WHERE b.symbol = t.symbol AND b.report_date = t.report_date)
-        WHERE (t.symbol, t.report_date) IN (SELECT symbol, report_date FROM batch)
-    """)
-    spark.sql(f"""
-        INSERT INTO {EARNINGS_TABLE}
-        SELECT * FROM batch b
-        WHERE NOT EXISTS (
-            SELECT 1 FROM {EARNINGS_TABLE} t WHERE t.symbol = b.symbol AND t.report_date = b.report_date
-        )
+        INSERT OVERWRITE {EARNINGS_TABLE}
+        SELECT * FROM {EARNINGS_TABLE}
+        WHERE (symbol, report_date) NOT IN (SELECT symbol, report_date FROM batch)
+        UNION ALL
+        SELECT * FROM batch
     """)
 
 def write_income_to_iceberg(df):
