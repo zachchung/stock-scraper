@@ -254,13 +254,12 @@ def write_earnings_to_iceberg(df):
         PARTITIONED BY (symbol)
     """)
 
-    spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
     spark.sql(f"""
-        INSERT OVERWRITE {EARNINGS_TABLE}
-        SELECT * FROM {EARNINGS_TABLE}
-        WHERE (symbol, report_date) NOT IN (SELECT symbol, report_date FROM batch)
-        UNION ALL
-        SELECT * FROM batch
+        MERGE INTO {EARNINGS_TABLE} AS target
+        USING batch AS source
+        ON target.symbol = source.symbol AND target.report_date = source.report_date
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
     """)
 
 def write_income_to_iceberg(df):
