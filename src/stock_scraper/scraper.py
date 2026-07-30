@@ -254,13 +254,8 @@ def write_earnings_to_iceberg(df):
         PARTITIONED BY (symbol)
     """)
 
-    spark.sql(f"""
-        MERGE INTO {EARNINGS_TABLE} t
-        USING batch b
-        ON t.symbol = b.symbol AND t.report_date = b.report_date
-        WHEN NOT MATCHED THEN INSERT *
-        WHEN MATCHED THEN UPDATE SET *
-    """)
+    spark.sql(f"DELETE FROM {EARNINGS_TABLE} WHERE symbol IN (SELECT DISTINCT symbol FROM batch)")
+    spark.sql(f"INSERT INTO {EARNINGS_TABLE} SELECT * FROM batch")
 
 def write_income_to_iceberg(df):
     spark = get_spark()
