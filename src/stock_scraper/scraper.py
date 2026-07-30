@@ -259,6 +259,7 @@ def write_earnings_to_iceberg(df):
         USING batch b
         ON t.symbol = b.symbol AND t.report_date = b.report_date
         WHEN NOT MATCHED THEN INSERT *
+        WHEN MATCHED THEN UPDATE SET *
     """)
 
 def write_income_to_iceberg(df):
