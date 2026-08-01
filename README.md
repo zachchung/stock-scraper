@@ -412,10 +412,10 @@ All data comes from **yfinance**:
 ### Ingestion
 
 ```bash
-# Earnings dates + income statements (also populates fiscal labels)
+# Earnings dates + income statements + EPS estimates (appends one EPS snapshot per symbol per run)
 python src/stock_scraper/scraper.py --earnings --tickers AAPL MSFT META
 
-# EPS estimates + fundamentals snapshot (appends one snapshot per symbol per run)
+# Fundamentals snapshot (market cap, 52w high/low, profit margin)
 python src/stock_scraper/scraper.py --fundamentals --tickers AAPL MSFT META
 ```
 

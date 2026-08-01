@@ -580,7 +580,7 @@ def main():
     parser.add_argument("--prepost", action="store_true", default=False,
                         help="Include pre/post market data in intraday fetch (unreliable — yfinance artifact spikes)")
     parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates and income statements")
-    parser.add_argument("--fundamentals", action="store_true", help="Fetch EPS estimates and fundamentals snapshot (market cap, 52w high/low, profit margin)")
+    parser.add_argument("--fundamentals", action="store_true", help="Fetch fundamentals snapshot (market cap, 52w high/low, profit margin)")
     parser.add_argument("--targets", action="store_true", help="Fetch analyst consensus price targets only (snapshot, appended on each run)")
     parser.add_argument("--analyst", action="store_true", help="Fetch analyst price targets AND upgrades/downgrades (both)")
     parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
@@ -651,18 +651,20 @@ def main():
         total = len(tickers)
         for i, ticker in enumerate(tickers, 1):
             try:
+                parts = []
                 edf = fetch_earnings(ticker)
                 if edf is not None and not edf.empty:
                     write_earnings_to_iceberg(edf)
+                    parts.append(f"earnings({len(edf)})")
                 idf = fetch_income_statements(ticker)
                 if idf is not None and not idf.empty:
                     write_income_to_iceberg(idf)
-                label = ""
-                if edf is not None:
-                    label += f" earnings({len(edf)})"
-                if idf is not None:
-                    label += f" income({len(idf)})"
-                print(f"[{i}/{total}] EARN {ticker} ({label.strip()}) done", flush=True)
+                    parts.append(f"income({len(idf)})")
+                eef = fetch_eps_estimates(ticker)
+                if eef is not None and not eef.empty:
+                    write_eps_estimates_to_iceberg(eef)
+                    parts.append(f"eps_estimates({len(eef)})")
+                print(f"[{i}/{total}] EARN {ticker} ({' '.join(parts)}) done", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] EARN {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
@@ -670,16 +672,12 @@ def main():
         total = len(tickers)
         for i, ticker in enumerate(tickers, 1):
             try:
-                parts = []
-                edf = fetch_eps_estimates(ticker)
-                if edf is not None and not edf.empty:
-                    write_eps_estimates_to_iceberg(edf)
-                    parts.append(f"eps_estimates({len(edf)})")
                 fund = fetch_fundamentals_snapshot(ticker)
                 if fund and fund.get("market_cap") is not None:
                     write_fundamentals_to_iceberg(fund)
-                    parts.append("fundamentals")
-                print(f"[{i}/{total}] FUND {ticker} ({' '.join(parts)}) done", flush=True)
+                    print(f"[{i}/{total}] FUND {ticker} (fundamentals) done", flush=True)
+                else:
+                    print(f"[{i}/{total}] FUND {ticker} done", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] FUND {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
