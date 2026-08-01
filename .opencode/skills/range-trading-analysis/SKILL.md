@@ -53,7 +53,40 @@ data/stocks/ohlcv_daily/data/symbol=<TICKER>/*.parquet
 The `scripts/range_trade_analysis.py` script
 has the full implementation. Run it with:
 ```bash
-.venv/bin/python scripts/range_trade_analysis.py
+.venv/bin/python scripts/range_trade_analysis.py <TICKER> [--top N] [--widths 0.05,0.10] [--detail]
 ```
 
-To analyze a different ticker, edit the `symbol=META` path in the DuckDB query.
+- `<TICKER>`: the symbol to analyze (e.g. `DIS`, `META`), optional, defaults to `META`.
+- `--top N`: show the top N best ranges for each width.
+- `--widths`: comma-separated widths to analyze, defaults to `0.05,0.10`.
+- `--detail`: additionally print full trade-by-trade logs.
+
+## Output format
+
+Always display results as **one separate table per width** (never combine
+widths into a single table). Example invocation and expected layout:
+
+```bash
+.venv/bin/python scripts/range_trade_analysis.py DIS --top 5
+```
+
+```
+########## Width 5.0% ##########
+
+Rank   Entry      Exit       Trades   Total P/L
+----------------------------------------------
+#1     $100.57   $105.60   27       $135.81
+#2     $92.57    $97.20    25       $115.75
+...
+
+########## Width 10.0% ##########
+
+Rank   Entry      Exit       Trades   Total P/L
+----------------------------------------------
+#1     $92.57    $101.83   16       $148.16
+...
+```
+
+Summary columns: Rank, Entry, Exit, Trades (completed), Total P/L per share.
+Note: fewer than N rows may appear if distinct price zones (entries ≥5% apart)
+are limited for the symbol.
