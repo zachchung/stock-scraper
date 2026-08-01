@@ -338,7 +338,6 @@ def fetch_fundamentals_snapshot(ticker):
         "quick_ratio": "quickRatio",
         "debt_to_equity": "debtToEquity",
         "return_on_equity": "returnOnEquity",
-        "free_cashflow": "freeCashflow",
     }
     row = {"symbol": ticker,
            "fetched_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S%z")}
@@ -627,7 +626,6 @@ def write_fundamentals_to_iceberg(snapshot_dict):
         T.StructField("quick_ratio", T.DoubleType()),
         T.StructField("debt_to_equity", T.DoubleType()),
         T.StructField("return_on_equity", T.DoubleType()),
-        T.StructField("free_cashflow", T.DoubleType()),
         T.StructField("last_fiscal_year_end", T.DateType()),
         T.StructField("next_fiscal_year_end", T.DateType()),
     ])
@@ -655,7 +653,6 @@ def write_fundamentals_to_iceberg(snapshot_dict):
             quick_ratio DOUBLE,
             debt_to_equity DOUBLE,
             return_on_equity DOUBLE,
-            free_cashflow DOUBLE,
             last_fiscal_year_end DATE,
             next_fiscal_year_end DATE
         )
@@ -667,7 +664,7 @@ def write_fundamentals_to_iceberg(snapshot_dict):
     for col_name in [
         "all_time_high", "all_time_low", "trailing_pe", "forward_pe",
         "price_to_book", "book_value", "current_ratio", "quick_ratio",
-        "debt_to_equity", "return_on_equity", "free_cashflow",
+        "debt_to_equity", "return_on_equity",
     ]:
         if col_name not in existing_cols:
             spark.sql(f"ALTER TABLE {FUNDAMENTALS_TABLE} ADD COLUMN {col_name} DOUBLE")
@@ -677,7 +674,7 @@ def write_fundamentals_to_iceberg(snapshot_dict):
         "all_time_high", "all_time_low", "profit_margin", "shares_outstanding",
         "eps_ttm", "eps_current_year", "forward_eps", "trailing_pe", "forward_pe",
         "price_to_book", "book_value", "current_ratio", "quick_ratio",
-        "debt_to_equity", "return_on_equity", "free_cashflow",
+        "debt_to_equity", "return_on_equity",
         "last_fiscal_year_end", "next_fiscal_year_end",
     ]
     col_list = ", ".join(cols)

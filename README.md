@@ -416,7 +416,6 @@ All data comes from **yfinance**:
 | `quick_ratio` | `DOUBLE` | Quick ratio (liquidity) |
 | `debt_to_equity` | `DOUBLE` | Debt-to-equity ratio |
 | `return_on_equity` | `DOUBLE` | Return on equity |
-| `free_cashflow` | `DOUBLE` | Free cash flow |
 | `last_fiscal_year_end` | `DATE` | Prior fiscal year end |
 | `next_fiscal_year_end` | `DATE` | Current fiscal year end |
 
