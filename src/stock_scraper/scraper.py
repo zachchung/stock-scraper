@@ -20,6 +20,7 @@ OHLCV_TABLE_INTRADAY = "local.stocks.ohlcv_intraday"
 EARNINGS_TABLE = "local.stocks.earnings_dates"
 INCOME_TABLE = "local.stocks.income_statements"
 CASHFLOW_TABLE = "local.stocks.cashflow_statements"
+BALANCE_SHEET_TABLE = "local.stocks.balance_sheets"
 ANALYST_TARGETS_TABLE = "local.stocks.analyst_targets"
 ANALYST_UPGRADES_TABLE = "local.stocks.analyst_upgrades_downgrades"
 EPS_ESTIMATES_TABLE = "local.stocks.eps_estimates"
@@ -253,6 +254,59 @@ def fetch_cashflow_statements(ticker):
     ).reset_index()
     pivoted.columns.name = None
     for col_name, _ in CASHFLOW_METRICS:
+        if col_name not in pivoted.columns:
+            pivoted[col_name] = float('nan')
+    return pivoted
+
+BALANCE_SHEET_METRICS = [
+    ("total_assets", "Total Assets"),
+    ("total_liabilities", "Total Liabilities Net Minority Interest"),
+    ("total_equity", "Total Equity Gross Minority Interest"),
+    ("stockholders_equity", "Stockholders Equity"),
+    ("total_debt", "Total Debt"),
+    ("net_debt", "Net Debt"),
+    ("cash_and_equivalents", "Cash And Cash Equivalents"),
+    ("cash_and_short_term_investments", "Cash Cash Equivalents And Short Term Investments"),
+    ("current_assets", "Current Assets"),
+    ("current_liabilities", "Current Liabilities"),
+    ("inventory", "Inventory"),
+    ("accounts_receivable", "Accounts Receivable"),
+    ("accounts_payable", "Accounts Payable"),
+    ("retained_earnings", "Retained Earnings"),
+    ("long_term_debt", "Long Term Debt"),
+    ("tangible_book_value", "Tangible Book Value"),
+    ("goodwill", "Goodwill"),
+    ("working_capital", "Working Capital"),
+    ("common_stock_equity", "Common Stock Equity"),
+]
+
+def fetch_balance_sheets(ticker):
+    stock = yf.Ticker(ticker)
+    qbs = stock.quarterly_balance_sheet
+    if qbs is None or qbs.empty:
+        return None
+    rows = []
+    for col_name, source_name in BALANCE_SHEET_METRICS:
+        if source_name in qbs.index:
+            for fiscal_date in qbs.columns:
+                val = qbs.loc[source_name, fiscal_date]
+                if pd.notna(val):
+                    rows.append({
+                        "symbol": ticker,
+                        "fiscal_date": fiscal_date.to_pydatetime().date(),
+                        "metric": col_name,
+                        "value": float(val),
+                    })
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    pivoted = df.pivot_table(
+        index=["symbol", "fiscal_date"],
+        columns="metric",
+        values="value",
+    ).reset_index()
+    pivoted.columns.name = None
+    for col_name, _ in BALANCE_SHEET_METRICS:
         if col_name not in pivoted.columns:
             pivoted[col_name] = float('nan')
     return pivoted
@@ -525,6 +579,50 @@ def write_cashflow_to_iceberg(df):
         WHEN NOT MATCHED THEN INSERT *
     """)
 
+def write_balance_sheets_to_iceberg(df):
+    spark = get_spark()
+    sdf = (
+        spark.createDataFrame(df)
+        .dropDuplicates(["symbol", "fiscal_date"])
+    )
+    sdf.createOrReplaceTempView("batch")
+
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {BALANCE_SHEET_TABLE} (
+            symbol STRING,
+            fiscal_date DATE,
+            total_assets DOUBLE,
+            total_liabilities DOUBLE,
+            total_equity DOUBLE,
+            stockholders_equity DOUBLE,
+            total_debt DOUBLE,
+            net_debt DOUBLE,
+            cash_and_equivalents DOUBLE,
+            cash_and_short_term_investments DOUBLE,
+            current_assets DOUBLE,
+            current_liabilities DOUBLE,
+            inventory DOUBLE,
+            accounts_receivable DOUBLE,
+            accounts_payable DOUBLE,
+            retained_earnings DOUBLE,
+            long_term_debt DOUBLE,
+            tangible_book_value DOUBLE,
+            goodwill DOUBLE,
+            working_capital DOUBLE,
+            common_stock_equity DOUBLE
+        )
+        USING iceberg
+        PARTITIONED BY (symbol)
+    """)
+
+    spark.sql(f"""
+        MERGE INTO {BALANCE_SHEET_TABLE} t
+        USING batch b
+        ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+
 def write_analyst_targets_to_iceberg(targets_dict):
     spark = get_spark()
     df = pd.DataFrame([targets_dict])
@@ -726,10 +824,12 @@ def main():
                         help="Intraday bar interval")
     parser.add_argument("--prepost", action="store_true", default=False,
                         help="Include pre/post market data in intraday fetch (unreliable — yfinance artifact spikes)")
-    parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates and income statements")
+    parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates, income statements and EPS estimates")
     parser.add_argument("--fundamentals", action="store_true", help="Fetch fundamentals snapshot (market cap, 52w high/low, profit margin)")
     parser.add_argument("--targets", action="store_true", help="Fetch analyst consensus price targets only (snapshot, appended on each run)")
     parser.add_argument("--analyst", action="store_true", help="Fetch analyst price targets AND upgrades/downgrades (both)")
+    parser.add_argument("--cashflow", action="store_true", help="Fetch quarterly cash flow statements")
+    parser.add_argument("--balancesheet", action="store_true", help="Fetch quarterly balance sheets")
     parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
     args = parser.parse_args()
 
@@ -745,8 +845,10 @@ def main():
     do_fundamentals = args.fundamentals
     do_targets = args.targets
     do_analyst = args.analyst
+    do_cashflow = args.cashflow
+    do_balance_sheet = args.balancesheet
 
-    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_fundamentals and not do_targets and not do_analyst:
+    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_fundamentals and not do_targets and not do_analyst and not do_cashflow and not do_balance_sheet:
         parser.print_help()
         sys.exit(1)
 
@@ -811,13 +913,35 @@ def main():
                 if eef is not None and not eef.empty:
                     write_eps_estimates_to_iceberg(eef)
                     parts.append(f"eps_estimates({len(eef)})")
-                cdf = fetch_cashflow_statements(ticker)
-                if cdf is not None and not cdf.empty:
-                    write_cashflow_to_iceberg(cdf)
-                    parts.append(f"cashflow({len(cdf)})")
                 print(f"[{i}/{total}] EARN {ticker} ({' '.join(parts)}) done", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] EARN {ticker} FAILED: {e}", file=sys.stderr, flush=True)
+
+    if do_cashflow:
+        total = len(tickers)
+        for i, ticker in enumerate(tickers, 1):
+            try:
+                cdf = fetch_cashflow_statements(ticker)
+                if cdf is not None and not cdf.empty:
+                    write_cashflow_to_iceberg(cdf)
+                    print(f"[{i}/{total}] CASHFLOW {ticker} ({len(cdf)} rows) done", flush=True)
+                else:
+                    print(f"[{i}/{total}] CASHFLOW {ticker} (no data) done", flush=True)
+            except Exception as e:
+                print(f"[{i}/{total}] CASHFLOW {ticker} FAILED: {e}", file=sys.stderr, flush=True)
+
+    if do_balance_sheet:
+        total = len(tickers)
+        for i, ticker in enumerate(tickers, 1):
+            try:
+                bsf = fetch_balance_sheets(ticker)
+                if bsf is not None and not bsf.empty:
+                    write_balance_sheets_to_iceberg(bsf)
+                    print(f"[{i}/{total}] BALANCE_SHEET {ticker} ({len(bsf)} rows) done", flush=True)
+                else:
+                    print(f"[{i}/{total}] BALANCE_SHEET {ticker} (no data) done", flush=True)
+            except Exception as e:
+                print(f"[{i}/{total}] BALANCE_SHEET {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
     if do_fundamentals:
         total = len(tickers)
