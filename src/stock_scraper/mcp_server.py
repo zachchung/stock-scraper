@@ -23,6 +23,7 @@ mcp = FastMCP(
         "- income_statements: symbol, fiscal_date, total_revenue, gross_profit, operating_income, net_income, diluted_eps, net_profit_margin (derived: net_income/total_revenue)\n"
         "- cashflow_statements: symbol, fiscal_date, operating_cash_flow, capital_expenditure, free_cash_flow, financing_cash_flow, investing_cash_flow\n"
         "- balance_sheets: symbol, fiscal_date, total_assets, total_liabilities, total_equity, total_debt, cash_and_equivalents, etc.\n"
+        "- yield_curve: date, y10/y3m/y5/y30 Treasury yields + 10y-3m and 10y-5y spreads\n"
         "- analyst_targets: current consensus price targets per symbol (high/low/mean/median)\n"
         "- analyst_upgrades_downgrades: historical individual analyst actions with price targets"
     ),
@@ -45,6 +46,20 @@ def get_conn():
 
     try:
         con.execute("LOAD iceberg")
+        con.execute(f"""
+            CREATE OR REPLACE VIEW yield_curve AS
+            SELECT date,
+                   MAX(CASE WHEN symbol='^TNX' THEN close END) AS y10,
+                   MAX(CASE WHEN symbol='^IRX' THEN close END) AS y3m,
+                   MAX(CASE WHEN symbol='^FVX' THEN close END) AS y5,
+                   MAX(CASE WHEN symbol='^TYX' THEN close END) AS y30,
+                   MAX(CASE WHEN symbol='^TNX' THEN close END)
+                     - MAX(CASE WHEN symbol='^IRX' THEN close END) AS spread_10y_3m,
+                   MAX(CASE WHEN symbol='^TNX' THEN close END)
+                     - MAX(CASE WHEN symbol='^FVX' THEN close END) AS spread_10y_5y
+            FROM (SELECT * FROM read_parquet('{OHLCV_GLOB}') WHERE source='macro')
+            GROUP BY date
+        """)
         earnings_path = str(DATA_DIR / "stocks/earnings_dates")
         if (DATA_DIR / "stocks/earnings_dates/metadata").exists():
             con.execute(f"CREATE VIEW earnings_dates AS SELECT * FROM iceberg_scan('{earnings_path}')")

@@ -433,6 +433,9 @@ python src/stock_scraper/scraper.py --balancesheet --tickers AAPL MSFT META
 
 # Fundamentals snapshot (market cap, 52w high/low, profit margin)
 python src/stock_scraper/scraper.py --fundamentals --tickers AAPL MSFT META
+
+# Macro data: S&P/Nasdaq/Dow/Russell, VIX, Treasury yields, BTC/ETH, gold, oil
+python src/stock_scraper/scraper.py --macro --period 10y
 ```
 
 ### Example Queries

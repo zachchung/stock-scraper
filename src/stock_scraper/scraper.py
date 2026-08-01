@@ -33,6 +33,25 @@ INTRADAY_INTERVALS = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d", "30m":
 DEFAULT_INTRADAY_INTERVAL = "1h"
 VALID_PERIODS = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
 
+MACRO_TICKERS = [
+    ("^GSPC", "SP500"),
+    ("^IXIC", "NASDAQ"),
+    ("^NDX", "NASDAQ100"),
+    ("^DJI", "DOW"),
+    ("^RUT", "RUSSELL2000"),
+    ("^VIX", "VIX"),
+    ("^IRX", "UST_13W"),
+    ("^FVX", "UST_5Y"),
+    ("^TNX", "UST_10Y"),
+    ("^TYX", "UST_30Y"),
+    ("BTC-USD", "BITCOIN"),
+    ("ETH-USD", "ETHEREUM"),
+    ("GC=F", "GOLD"),
+    ("CL=F", "CRUDE_OIL"),
+]
+MACRO_TICKER_SYMBOLS = [s for s, _ in MACRO_TICKERS]
+MACRO_TICKER_NAMES = {s: n for s, n in MACRO_TICKERS}
+
 SPARK = None
 
 def get_spark():
@@ -95,6 +114,36 @@ def fetch_ohlcv_daily(ticker, period="max", start_date=None):
     df["symbol"] = ticker
     df["source"] = "yfinance"
     return df
+
+def fetch_macro_daily(period="max", start_date=None):
+    """Fetch daily history for all macro tickers (indexes, yields, crypto, commodities)."""
+    if start_date:
+        start = (start_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        end = datetime.today().strftime("%Y-%m-%d")
+        hist = yf.download(MACRO_TICKER_SYMBOLS, start=start, end=end,
+                           auto_adjust=False, progress=False, group_by="ticker")
+    else:
+        hist = yf.download(MACRO_TICKER_SYMBOLS, period=period,
+                           auto_adjust=False, progress=False, group_by="ticker")
+    if hist.empty:
+        return None
+    frames = []
+    for sym in MACRO_TICKER_SYMBOLS:
+        try:
+            h = hist[sym].dropna(subset=["Close"])
+        except Exception:
+            continue
+        if h.empty:
+            continue
+        df = h.reset_index()[["Date", "Open", "High", "Low", "Close", "Volume"]].copy()
+        df.columns = ["date", "open", "high", "low", "close", "volume"]
+        df["symbol"] = sym
+        df["asset"] = MACRO_TICKER_NAMES[sym]
+        df["source"] = "macro"
+        frames.append(df)
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
 
 def fetch_ohlcv_intraday(ticker, interval="1h", period="max", start_date=None, prepost=False):
     # start_date is for incremental load
@@ -426,6 +475,9 @@ def fetch_fundamentals_snapshot(ticker):
 
 def write_ohlcv_daily_to_iceberg(df):
     spark = get_spark()
+    if "asset" not in df.columns:
+        df = df.copy()
+        df["asset"] = None
     sdf = (
         spark.createDataFrame(df)
         .withColumn("date", to_date(col("date")))
@@ -442,11 +494,16 @@ def write_ohlcv_daily_to_iceberg(df):
             low DOUBLE,
             close DOUBLE,
             volume LONG,
-            source STRING
+            source STRING,
+            asset STRING
         )
         USING iceberg
         PARTITIONED BY (symbol)
     """)
+
+    existing_cols = {c.name for c in spark.table(OHLCV_TABLE_DAILY).schema}
+    if "asset" not in existing_cols:
+        spark.sql(f"ALTER TABLE {OHLCV_TABLE_DAILY} ADD COLUMN asset STRING")
 
     new_rows = count_new_rows(OHLCV_TABLE_DAILY, ["symbol", "date"])
     spark.sql(f"""
@@ -858,6 +915,7 @@ def main():
     parser.add_argument("--prepost", action="store_true", default=False,
                         help="Include pre/post market data in intraday fetch (unreliable — yfinance artifact spikes)")
     parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates, income statements and EPS estimates")
+    parser.add_argument("--macro", action="store_true", help="Fetch macro data: indexes (S&P, Nasdaq, Dow), Treasury yields, VIX, crypto, commodities")
     parser.add_argument("--fundamentals", action="store_true", help="Fetch fundamentals snapshot (market cap, 52w high/low, profit margin)")
     parser.add_argument("--targets", action="store_true", help="Fetch analyst consensus price targets only (snapshot, appended on each run)")
     parser.add_argument("--analyst", action="store_true", help="Fetch analyst price targets AND upgrades/downgrades (both)")
@@ -875,17 +933,32 @@ def main():
     do_ohlcv_daily = args.daily
     do_ohlcv_intraday = args.intraday
     do_earnings = args.earnings
+    do_macro = args.macro
     do_fundamentals = args.fundamentals
     do_targets = args.targets
     do_analyst = args.analyst
     do_cashflow = args.cashflow
     do_balance_sheet = args.balancesheet
 
-    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_fundamentals and not do_targets and not do_analyst and not do_cashflow and not do_balance_sheet:
+    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_macro and not do_fundamentals and not do_targets and not do_analyst and not do_cashflow and not do_balance_sheet:
         parser.print_help()
         sys.exit(1)
 
     start = datetime.now()
+
+    if do_macro:
+        total = len(MACRO_TICKER_SYMBOLS)
+        if args.incremental:
+            macro_dates = get_latest_dates()
+        else:
+            macro_dates = {}
+        mdf = fetch_macro_daily(period=args.period,
+                                start_date=macro_dates.get(MACRO_TICKER_SYMBOLS[0]) if macro_dates else None)
+        if mdf is not None and not mdf.empty:
+            n = write_ohlcv_daily_to_iceberg(mdf) or 0
+            print(f"MACRO fetched {len(mdf)} rows, +{n} new", flush=True)
+        else:
+            print("MACRO no data", flush=True)
 
     if do_ohlcv_daily:
         if args.incremental:
