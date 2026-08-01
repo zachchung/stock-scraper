@@ -2,6 +2,7 @@
 """Stock scraper: fetch OHLCV, earnings dates, and income statements via yfinance."""
 
 import argparse
+import logging
 import sys
 from datetime import date, datetime, time, timedelta
 
@@ -12,6 +13,8 @@ import yfinance as yf
 from dateutil.relativedelta import relativedelta
 from pyspark.sql import SparkSession, types as T
 from pyspark.sql.functions import col, to_date
+
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 WAREHOUSE_PATH = "/Users/ZacharyChung1/code/stock_scraper/data"
 ICEBERG_VERSION = "org.apache.iceberg:iceberg-spark-runtime-4.1_2.13:1.11.0"
@@ -45,7 +48,20 @@ def get_spark():
             .config("spark.jars.packages", ICEBERG_VERSION)
             .getOrCreate()
         )
+        SPARK.sparkContext.setLogLevel("ERROR")
     return SPARK
+
+def count_new_rows(table_name, keys):
+    """Count batch rows (temp view `batch`) not already present in table on `keys`."""
+    spark = get_spark()
+    cond = " AND ".join(f"t.{k} = b.{k}" for k in keys)
+    try:
+        return spark.sql(f"""
+            SELECT COUNT(*) AS n FROM batch b
+            LEFT ANTI JOIN {table_name} t ON {cond}
+        """).first()["n"]
+    except Exception:
+        return None
 
 def market_session(dt: datetime) -> str:
     t = dt.time()
@@ -69,9 +85,9 @@ def fetch_ohlcv_daily(ticker, period="max", start_date=None):
     if start_date:
         start = (start_date + timedelta(days=1)).strftime("%Y-%m-%d")
         end = datetime.today().strftime("%Y-%m-%d")
-        hist = yf.download(ticker, start=start, end=end, auto_adjust=False)
+        hist = yf.download(ticker, start=start, end=end, auto_adjust=False, progress=False)
     else:
-        hist = yf.download(ticker, period=period, auto_adjust=False)
+        hist = yf.download(ticker, period=period, auto_adjust=False, progress=False)
     if hist.empty:
         return None
     df = hist.reset_index()[["Date", "Open", "High", "Low", "Close", "Volume"]].copy()
@@ -83,9 +99,9 @@ def fetch_ohlcv_daily(ticker, period="max", start_date=None):
 def fetch_ohlcv_intraday(ticker, interval="1h", period="max", start_date=None, prepost=False):
     # start_date is for incremental load
     if start_date:
-        hist = yf.download(ticker, start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost, auto_adjust=False)
+        hist = yf.download(ticker, start=start_date.strftime("%Y-%m-%d"), interval=interval, prepost=prepost, auto_adjust=False, progress=False)
     else:
-        hist = yf.download(ticker, period=period, interval=interval, prepost=prepost, auto_adjust=False)
+        hist = yf.download(ticker, period=period, interval=interval, prepost=prepost, auto_adjust=False, progress=False)
     if hist.empty:
         return None
     df = hist.reset_index()[["Datetime", "Open", "High", "Low", "Close", "Volume"]].copy()
@@ -432,12 +448,14 @@ def write_ohlcv_daily_to_iceberg(df):
         PARTITIONED BY (symbol)
     """)
 
+    new_rows = count_new_rows(OHLCV_TABLE_DAILY, ["symbol", "date"])
     spark.sql(f"""
         MERGE INTO {OHLCV_TABLE_DAILY} t
         USING batch b
         ON t.symbol = b.symbol AND t.date = b.date
         WHEN NOT MATCHED THEN INSERT *
     """)
+    return new_rows
 
 def write_ohlcv_intraday_to_iceberg(df):
     spark = get_spark()
@@ -457,12 +475,14 @@ def write_ohlcv_intraday_to_iceberg(df):
         USING iceberg
         PARTITIONED BY (symbol)
     """)
+    new_rows = count_new_rows(OHLCV_TABLE_INTRADAY, ["symbol", "timestamp", "interval"])
     spark.sql(f"""
         MERGE INTO {OHLCV_TABLE_INTRADAY} t
         USING batch b
         ON t.symbol = b.symbol AND t.timestamp = b.timestamp AND t.interval = b.interval
         WHEN NOT MATCHED THEN INSERT *
     """)
+    return new_rows
 
 def write_earnings_to_iceberg(df):
     spark = get_spark()
@@ -499,6 +519,7 @@ def write_earnings_to_iceberg(df):
         if col_name not in existing_cols:
             spark.sql(f"ALTER TABLE {EARNINGS_TABLE} ADD COLUMN {col_name} {col_type}")
 
+    new_rows = count_new_rows(EARNINGS_TABLE, ["symbol", "report_date"])
     spark.sql(f"""
         MERGE INTO {EARNINGS_TABLE} AS target
         USING batch AS source
@@ -506,6 +527,7 @@ def write_earnings_to_iceberg(df):
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
+    return new_rows
 
 def write_income_to_iceberg(df):
     spark = get_spark()
@@ -536,6 +558,7 @@ def write_income_to_iceberg(df):
     if "net_profit_margin" not in existing_cols:
         spark.sql(f"ALTER TABLE {INCOME_TABLE} ADD COLUMN net_profit_margin DOUBLE")
 
+    new_rows = count_new_rows(INCOME_TABLE, ["symbol", "fiscal_date"])
     spark.sql(f"""
         MERGE INTO {INCOME_TABLE} t
         USING batch b
@@ -543,6 +566,7 @@ def write_income_to_iceberg(df):
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
+    return new_rows
 
 def write_cashflow_to_iceberg(df):
     spark = get_spark()
@@ -571,6 +595,7 @@ def write_cashflow_to_iceberg(df):
         PARTITIONED BY (symbol)
     """)
 
+    new_rows = count_new_rows(CASHFLOW_TABLE, ["symbol", "fiscal_date"])
     spark.sql(f"""
         MERGE INTO {CASHFLOW_TABLE} t
         USING batch b
@@ -578,6 +603,7 @@ def write_cashflow_to_iceberg(df):
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
+    return new_rows
 
 def write_balance_sheets_to_iceberg(df):
     spark = get_spark()
@@ -615,6 +641,7 @@ def write_balance_sheets_to_iceberg(df):
         PARTITIONED BY (symbol)
     """)
 
+    new_rows = count_new_rows(BALANCE_SHEET_TABLE, ["symbol", "fiscal_date"])
     spark.sql(f"""
         MERGE INTO {BALANCE_SHEET_TABLE} t
         USING batch b
@@ -622,6 +649,7 @@ def write_balance_sheets_to_iceberg(df):
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
+    return new_rows
 
 def write_analyst_targets_to_iceberg(targets_dict):
     spark = get_spark()
@@ -650,6 +678,7 @@ def write_analyst_targets_to_iceberg(targets_dict):
         INSERT INTO {ANALYST_TARGETS_TABLE}
         SELECT * FROM batch
     """)
+    return sdf.count()
 
 def write_upgrades_downgrades_to_iceberg(df):
     spark = get_spark()
@@ -669,12 +698,14 @@ def write_upgrades_downgrades_to_iceberg(df):
         USING iceberg
         PARTITIONED BY (symbol)
     """)
+    new_rows = count_new_rows(ANALYST_UPGRADES_TABLE, ["symbol", "grade_date", "firm"])
     spark.sql(f"""
         MERGE INTO {ANALYST_UPGRADES_TABLE} t
         USING batch b
         ON t.symbol = b.symbol AND t.grade_date = b.grade_date AND t.firm = b.firm
         WHEN NOT MATCHED THEN INSERT *
     """)
+    return new_rows
 
 def write_eps_estimates_to_iceberg(df):
     spark = get_spark()
@@ -699,6 +730,7 @@ def write_eps_estimates_to_iceberg(df):
         INSERT INTO {EPS_ESTIMATES_TABLE}
         SELECT * FROM batch
     """)
+    return sdf.count()
 
 def write_fundamentals_to_iceberg(snapshot_dict):
     spark = get_spark()
@@ -780,6 +812,7 @@ def write_fundamentals_to_iceberg(snapshot_dict):
         INSERT INTO {FUNDAMENTALS_TABLE} ({col_list})
         SELECT {col_list} FROM batch
     """)
+    return sdf.count()
 
 def get_latest_dates():
     parquet_path = f"{WAREHOUSE_PATH}/stocks/ohlcv_daily/data/*/*.parquet"
@@ -868,10 +901,11 @@ def main():
                     df = fetch_ohlcv_daily(ticker, start_date=last_date)
                 else:
                     df = fetch_ohlcv_daily(ticker, period=args.period)
+                n = 0
                 if df is not None and not df.empty:
-                    write_ohlcv_daily_to_iceberg(df)
+                    n = write_ohlcv_daily_to_iceberg(df) or 0
                 label = "incr" if last_date is not None else "full"
-                print(f"[{i}/{total}] OHLCV {ticker} ({label}) done", flush=True)
+                print(f"[{i}/{total}] OHLCV {ticker} ({label}) +{n} rows", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] OHLCV {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
@@ -890,9 +924,11 @@ def main():
                 else:
                     df = fetch_ohlcv_intraday(ticker, interval=args.interval, period=args.period, prepost=args.prepost)
                 if df is not None and not df.empty:
-                    write_ohlcv_intraday_to_iceberg(df)
+                    n = write_ohlcv_intraday_to_iceberg(df) or 0
+                else:
+                    n = 0
                 label = "incr" if last_ts is not None else "full"
-                print(f"[{i}/{total}] INTRADAY {ticker} ({args.interval}) {label} done ({len(df) if df is not None else 0} bars)", flush=True)
+                print(f"[{i}/{total}] INTRADAY {ticker} ({args.interval}) {label} +{n} rows", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] INTRADAY {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
@@ -903,17 +939,17 @@ def main():
                 parts = []
                 edf = fetch_earnings(ticker)
                 if edf is not None and not edf.empty:
-                    write_earnings_to_iceberg(edf)
-                    parts.append(f"earnings({len(edf)})")
+                    n = write_earnings_to_iceberg(edf) or 0
+                    parts.append(f"earnings+{n}")
                 idf = fetch_income_statements(ticker)
                 if idf is not None and not idf.empty:
-                    write_income_to_iceberg(idf)
-                    parts.append(f"income({len(idf)})")
+                    n = write_income_to_iceberg(idf) or 0
+                    parts.append(f"income+{n}")
                 eef = fetch_eps_estimates(ticker)
                 if eef is not None and not eef.empty:
-                    write_eps_estimates_to_iceberg(eef)
-                    parts.append(f"eps_estimates({len(eef)})")
-                print(f"[{i}/{total}] EARN {ticker} ({' '.join(parts)}) done", flush=True)
+                    n = write_eps_estimates_to_iceberg(eef) or 0
+                    parts.append(f"eps_estimates+{n}")
+                print(f"[{i}/{total}] EARN {ticker} ({' '.join(parts)})", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] EARN {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
@@ -923,10 +959,10 @@ def main():
             try:
                 cdf = fetch_cashflow_statements(ticker)
                 if cdf is not None and not cdf.empty:
-                    write_cashflow_to_iceberg(cdf)
-                    print(f"[{i}/{total}] CASHFLOW {ticker} ({len(cdf)} rows) done", flush=True)
+                    n = write_cashflow_to_iceberg(cdf) or 0
+                    print(f"[{i}/{total}] CASHFLOW {ticker} +{n} rows", flush=True)
                 else:
-                    print(f"[{i}/{total}] CASHFLOW {ticker} (no data) done", flush=True)
+                    print(f"[{i}/{total}] CASHFLOW {ticker} +0 rows", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] CASHFLOW {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
@@ -936,10 +972,10 @@ def main():
             try:
                 bsf = fetch_balance_sheets(ticker)
                 if bsf is not None and not bsf.empty:
-                    write_balance_sheets_to_iceberg(bsf)
-                    print(f"[{i}/{total}] BALANCE_SHEET {ticker} ({len(bsf)} rows) done", flush=True)
+                    n = write_balance_sheets_to_iceberg(bsf) or 0
+                    print(f"[{i}/{total}] BALANCE_SHEET {ticker} +{n} rows", flush=True)
                 else:
-                    print(f"[{i}/{total}] BALANCE_SHEET {ticker} (no data) done", flush=True)
+                    print(f"[{i}/{total}] BALANCE_SHEET {ticker} +0 rows", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] BALANCE_SHEET {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
@@ -949,10 +985,10 @@ def main():
             try:
                 fund = fetch_fundamentals_snapshot(ticker)
                 if fund and fund.get("market_cap") is not None:
-                    write_fundamentals_to_iceberg(fund)
-                    print(f"[{i}/{total}] FUND {ticker} (fundamentals) done", flush=True)
+                    n = write_fundamentals_to_iceberg(fund) or 0
+                    print(f"[{i}/{total}] FUND {ticker} +{n} row(s)", flush=True)
                 else:
-                    print(f"[{i}/{total}] FUND {ticker} done", flush=True)
+                    print(f"[{i}/{total}] FUND {ticker} +0 rows", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] FUND {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
@@ -964,14 +1000,14 @@ def main():
                 if do_targets or do_analyst:
                     targets = fetch_analyst_targets(ticker)
                     if targets:
-                        write_analyst_targets_to_iceberg(targets)
-                        parts.append(f"targets")
+                        n = write_analyst_targets_to_iceberg(targets) or 0
+                        parts.append(f"targets+{n}")
                 if do_analyst:
                     udf = fetch_upgrades_downgrades(ticker)
                     if udf is not None and not udf.empty:
-                        write_upgrades_downgrades_to_iceberg(udf)
-                        parts.append(f"upgrades({len(udf)})")
-                print(f"[{i}/{total}] ANALYST {ticker} ({' '.join(parts)}) done", flush=True)
+                        n = write_upgrades_downgrades_to_iceberg(udf) or 0
+                        parts.append(f"upgrades+{n}")
+                print(f"[{i}/{total}] ANALYST {ticker} ({' '.join(parts)})", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] ANALYST {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
