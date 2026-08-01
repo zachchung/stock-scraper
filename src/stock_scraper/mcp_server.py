@@ -20,7 +20,7 @@ mcp = FastMCP(
         "- ohlcv: symbol, date, open, high, low, close, volume, source\n"
         "- ohlcv_intraday: symbol, timestamp, open, high, low, close, volume, interval (1h, 30m, etc)\n"
         "- earnings_dates: symbol, report_date (ISO timestamp), eps_estimate, eps_actual, surprise_pct, market_session (pre_market|during_market|post_market)\n"
-        "- income_statements: symbol, fiscal_date, total_revenue, gross_profit, operating_income, net_income, diluted_eps\n"
+        "- income_statements: symbol, fiscal_date, total_revenue, gross_profit, operating_income, net_income, diluted_eps, net_profit_margin (derived: net_income/total_revenue)\n"
         "- analyst_targets: current consensus price targets per symbol (high/low/mean/median)\n"
         "- analyst_upgrades_downgrades: historical individual analyst actions with price targets"
     ),

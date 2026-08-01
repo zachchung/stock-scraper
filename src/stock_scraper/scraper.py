@@ -209,6 +209,7 @@ def fetch_income_statements(ticker):
     for col_name, _ in INCOME_METRICS:
         if col_name not in pivoted.columns:
             pivoted[col_name] = float('nan')
+    pivoted["net_profit_margin"] = pivoted["net_income"] / pivoted["total_revenue"]
     return pivoted
 
 def fetch_analyst_targets(ticker):
@@ -411,16 +412,22 @@ def write_income_to_iceberg(df):
             net_income DOUBLE,
             diluted_eps DOUBLE,
             ebit DOUBLE,
-            ebitda DOUBLE
+            ebitda DOUBLE,
+            net_profit_margin DOUBLE
         )
         USING iceberg
         PARTITIONED BY (symbol)
     """)
 
+    existing_cols = {c.name for c in spark.table(INCOME_TABLE).schema}
+    if "net_profit_margin" not in existing_cols:
+        spark.sql(f"ALTER TABLE {INCOME_TABLE} ADD COLUMN net_profit_margin DOUBLE")
+
     spark.sql(f"""
         MERGE INTO {INCOME_TABLE} t
         USING batch b
         ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date
+        WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
 
