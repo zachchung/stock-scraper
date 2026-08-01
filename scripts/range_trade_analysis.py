@@ -5,9 +5,12 @@ import duckdb
 symbol = sys.argv[1].upper() if len(sys.argv) > 1 else "META"
 
 top_n = None
+widths = [0.05, 0.10]
 for i, arg in enumerate(sys.argv):
     if arg == '--top' and i + 1 < len(sys.argv):
         top_n = int(sys.argv[i + 1])
+    if arg == '--widths' and i + 1 < len(sys.argv):
+        widths = [float(w) for w in sys.argv[i + 1].split(',')]
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -71,46 +74,46 @@ def print_trades(label, trades, entry, exit_price, width, count):
     print("-" * 72)
     print(f"{'Total P/L per share':>52} ${total_pl:<7.2f}")
 
-if top_n:
+def select_top_for_width(width, n):
     results = []
     for entry in entry_candidates:
-        width = 0.051
-        while width <= 0.25:
-            exit_price = round(entry * (1 + width), 2)
-            trades = simulate(entry, exit_price)
-            results.append((len(trades), entry, exit_price, width, trades))
-            width += 0.001
+        exit_price = round(entry * (1 + width), 2)
+        trades = simulate(entry, exit_price)
+        results.append((len(trades), entry, exit_price, trades))
 
     results.sort(key=lambda x: (-x[0], x[1], x[2]))
 
     selected = []
     selected_entries = []
-    for r in results:
-        count, entry, exit_price, width, trades = r
+    for count, entry, exit_price, trades in results:
         if not selected_entries:
-            selected.append(r)
+            selected.append((count, entry, exit_price, trades))
             selected_entries.append(entry)
         else:
             too_close = any(abs(entry - se) / current_price < 0.05 for se in selected_entries)
             if not too_close:
-                selected.append(r)
+                selected.append((count, entry, exit_price, trades))
                 selected_entries.append(entry)
-        if len(selected) == top_n:
+        if len(selected) == n:
             break
+    return selected
 
-    for rank, (count, entry, exit_price, width, trades) in enumerate(selected, 1):
-        print_trades(f"#{rank} {symbol} Range", trades, entry, exit_price, width, count)
+
+if top_n:
+    for width in widths:
+        print(f"########## Width {width * 100:.1f}% ##########")
         print()
+        for rank, (count, entry, exit_price, trades) in enumerate(select_top_for_width(width, top_n), 1):
+            print_trades(f"#{rank} {symbol} Range", trades, entry, exit_price, width, count)
+            print()
 else:
-    best_count = -1
-    best_entry = None
-    best_exit = None
-    best_trades = []
-    best_width = None
+    for width in widths:
+        best_count = -1
+        best_entry = None
+        best_exit = None
+        best_trades = []
 
-    for entry in entry_candidates:
-        width = 0.051
-        while width <= 0.25:
+        for entry in entry_candidates:
             exit_price = round(entry * (1 + width), 2)
             trades = simulate(entry, exit_price)
             count = len(trades)
@@ -119,30 +122,10 @@ else:
                 best_entry = entry
                 best_exit = exit_price
                 best_trades = trades
-                best_width = width
-            width += 0.001
 
-    refine_range = 2.0
-    refine_step = 0.10
-    e_start = max(best_entry - refine_range, entry_range_min)
-    e_end = min(best_entry + refine_range, entry_range_max)
-    e = e_start
-    while e <= e_end:
-        width = max(best_width - 0.01, 0.051)
-        width_end = min(best_width + 0.01, 0.25)
-        while width <= width_end:
-            exit_price = round(e * (1 + width), 2)
-            trades = simulate(e, exit_price)
-            count = len(trades)
-            if count > best_count:
-                best_count = count
-                best_entry = e
-                best_exit = exit_price
-                best_trades = trades
-                best_width = width
-            width += 0.0005
-        e += refine_step
-
-    print_trades(f"{symbol} Best Range", best_trades, best_entry, best_exit, best_width, best_count)
+        print(f"########## Width {width * 100:.1f}% ##########")
+        print()
+        print_trades(f"{symbol} Best Range", best_trades, best_entry, best_exit, width, best_count)
+        print()
 
 con.close()
