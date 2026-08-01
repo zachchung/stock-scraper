@@ -21,6 +21,7 @@ mcp = FastMCP(
         "- ohlcv_intraday: symbol, timestamp, open, high, low, close, volume, interval (1h, 30m, etc)\n"
         "- earnings_dates: symbol, report_date (ISO timestamp), eps_estimate, eps_actual, surprise_pct, market_session (pre_market|during_market|post_market)\n"
         "- income_statements: symbol, fiscal_date, total_revenue, gross_profit, operating_income, net_income, diluted_eps, net_profit_margin (derived: net_income/total_revenue)\n"
+        "- cashflow_statements: symbol, fiscal_date, operating_cash_flow, capital_expenditure, free_cash_flow, financing_cash_flow, investing_cash_flow\n"
         "- analyst_targets: current consensus price targets per symbol (high/low/mean/median)\n"
         "- analyst_upgrades_downgrades: historical individual analyst actions with price targets"
     ),
@@ -49,6 +50,9 @@ def get_conn():
         income_path = str(DATA_DIR / "stocks/income_statements")
         if (DATA_DIR / "stocks/income_statements/metadata").exists():
             con.execute(f"CREATE VIEW income_statements AS SELECT * FROM iceberg_scan('{income_path}')")
+        cashflow_path = str(DATA_DIR / "stocks/cashflow_statements")
+        if (DATA_DIR / "stocks/cashflow_statements/metadata").exists():
+            con.execute(f"CREATE VIEW cashflow_statements AS SELECT * FROM iceberg_scan('{cashflow_path}')")
         analyst_targets_path = str(DATA_DIR / "stocks/analyst_targets")
         if (DATA_DIR / "stocks/analyst_targets/metadata").exists():
             con.execute(f"CREATE VIEW analyst_targets AS SELECT * FROM iceberg_scan('{analyst_targets_path}')")
@@ -74,7 +78,7 @@ def fmt(result) -> str:
 @mcp.tool()
 def query(sql: str) -> str:
     """Run arbitrary SQL against the data warehouse. Available views:
-    ohlcv, earnings_dates, income_statements."""
+    ohlcv, earnings_dates, income_statements, cashflow_statements."""
     con = get_conn()
     try:
         return fmt(con.sql(sql))

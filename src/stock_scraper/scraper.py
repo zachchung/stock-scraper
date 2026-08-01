@@ -19,6 +19,7 @@ OHLCV_TABLE_DAILY = "local.stocks.ohlcv_daily"
 OHLCV_TABLE_INTRADAY = "local.stocks.ohlcv_intraday"
 EARNINGS_TABLE = "local.stocks.earnings_dates"
 INCOME_TABLE = "local.stocks.income_statements"
+CASHFLOW_TABLE = "local.stocks.cashflow_statements"
 ANALYST_TARGETS_TABLE = "local.stocks.analyst_targets"
 ANALYST_UPGRADES_TABLE = "local.stocks.analyst_upgrades_downgrades"
 EPS_ESTIMATES_TABLE = "local.stocks.eps_estimates"
@@ -210,6 +211,50 @@ def fetch_income_statements(ticker):
         if col_name not in pivoted.columns:
             pivoted[col_name] = float('nan')
     pivoted["net_profit_margin"] = pivoted["net_income"] / pivoted["total_revenue"]
+    return pivoted
+
+CASHFLOW_METRICS = [
+    ("operating_cash_flow", "Operating Cash Flow"),
+    ("capital_expenditure", "Capital Expenditure"),
+    ("free_cash_flow", "Free Cash Flow"),
+    ("financing_cash_flow", "Financing Cash Flow"),
+    ("investing_cash_flow", "Investing Cash Flow"),
+    ("stock_based_compensation", "Stock Based Compensation"),
+    ("changes_in_cash", "Changes In Cash"),
+    ("end_cash_position", "End Cash Position"),
+    ("depreciation_amortization", "Depreciation Amortization Depletion"),
+    ("net_income_cont_operations", "Net Income From Continuing Operations"),
+]
+
+def fetch_cashflow_statements(ticker):
+    stock = yf.Ticker(ticker)
+    qcf = stock.quarterly_cashflow
+    if qcf is None or qcf.empty:
+        return None
+    rows = []
+    for col_name, source_name in CASHFLOW_METRICS:
+        if source_name in qcf.index:
+            for fiscal_date in qcf.columns:
+                val = qcf.loc[source_name, fiscal_date]
+                if pd.notna(val):
+                    rows.append({
+                        "symbol": ticker,
+                        "fiscal_date": fiscal_date.to_pydatetime().date(),
+                        "metric": col_name,
+                        "value": float(val),
+                    })
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    pivoted = df.pivot_table(
+        index=["symbol", "fiscal_date"],
+        columns="metric",
+        values="value",
+    ).reset_index()
+    pivoted.columns.name = None
+    for col_name, _ in CASHFLOW_METRICS:
+        if col_name not in pivoted.columns:
+            pivoted[col_name] = float('nan')
     return pivoted
 
 def fetch_analyst_targets(ticker):
@@ -440,6 +485,41 @@ def write_income_to_iceberg(df):
 
     spark.sql(f"""
         MERGE INTO {INCOME_TABLE} t
+        USING batch b
+        ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+
+def write_cashflow_to_iceberg(df):
+    spark = get_spark()
+    sdf = (
+        spark.createDataFrame(df)
+        .dropDuplicates(["symbol", "fiscal_date"])
+    )
+    sdf.createOrReplaceTempView("batch")
+
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {CASHFLOW_TABLE} (
+            symbol STRING,
+            fiscal_date DATE,
+            operating_cash_flow DOUBLE,
+            capital_expenditure DOUBLE,
+            free_cash_flow DOUBLE,
+            financing_cash_flow DOUBLE,
+            investing_cash_flow DOUBLE,
+            stock_based_compensation DOUBLE,
+            changes_in_cash DOUBLE,
+            end_cash_position DOUBLE,
+            depreciation_amortization DOUBLE,
+            net_income_cont_operations DOUBLE
+        )
+        USING iceberg
+        PARTITIONED BY (symbol)
+    """)
+
+    spark.sql(f"""
+        MERGE INTO {CASHFLOW_TABLE} t
         USING batch b
         ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date
         WHEN MATCHED THEN UPDATE SET *
@@ -734,6 +814,10 @@ def main():
                 if eef is not None and not eef.empty:
                     write_eps_estimates_to_iceberg(eef)
                     parts.append(f"eps_estimates({len(eef)})")
+                cdf = fetch_cashflow_statements(ticker)
+                if cdf is not None and not cdf.empty:
+                    write_cashflow_to_iceberg(cdf)
+                    parts.append(f"cashflow({len(cdf)})")
                 print(f"[{i}/{total}] EARN {ticker} ({' '.join(parts)}) done", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] EARN {ticker} FAILED: {e}", file=sys.stderr, flush=True)

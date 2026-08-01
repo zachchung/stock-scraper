@@ -423,7 +423,7 @@ All data comes from **yfinance**:
 ### Ingestion
 
 ```bash
-# Earnings dates + income statements + EPS estimates (appends one EPS snapshot per symbol per run)
+# Earnings dates + income statements + EPS estimates + cash flow statements
 python src/stock_scraper/scraper.py --earnings --tickers AAPL MSFT META
 
 # Fundamentals snapshot (market cap, 52w high/low, profit margin)
