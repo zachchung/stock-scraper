@@ -401,11 +401,22 @@ All data comes from **yfinance**:
 | `market_cap` | `DOUBLE` | Market capitalization |
 | `fifty_two_week_high` | `DOUBLE` | 52-week high |
 | `fifty_two_week_low` | `DOUBLE` | 52-week low |
+| `all_time_high` | `DOUBLE` | All-time high |
+| `all_time_low` | `DOUBLE` | All-time low |
 | `profit_margin` | `DOUBLE` | Net profit margin |
 | `shares_outstanding` | `DOUBLE` | Shares outstanding |
 | `eps_ttm` | `DOUBLE` | Trailing twelve-month EPS |
 | `eps_current_year` | `DOUBLE` | Current fiscal year consensus EPS |
 | `forward_eps` | `DOUBLE` | Next fiscal year consensus EPS |
+| `trailing_pe` | `DOUBLE` | Trailing P/E (vendor-computed) |
+| `forward_pe` | `DOUBLE` | Forward P/E (vendor-computed) |
+| `price_to_book` | `DOUBLE` | Price-to-book ratio |
+| `book_value` | `DOUBLE` | Book value per share |
+| `current_ratio` | `DOUBLE` | Current ratio (liquidity) |
+| `quick_ratio` | `DOUBLE` | Quick ratio (liquidity) |
+| `debt_to_equity` | `DOUBLE` | Debt-to-equity ratio |
+| `return_on_equity` | `DOUBLE` | Return on equity |
+| `free_cashflow` | `DOUBLE` | Free cash flow |
 | `last_fiscal_year_end` | `DATE` | Prior fiscal year end |
 | `next_fiscal_year_end` | `DATE` | Current fiscal year end |
 

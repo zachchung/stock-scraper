@@ -280,11 +280,22 @@ def fetch_fundamentals_snapshot(ticker):
         "market_cap": info.get("marketCap"),
         "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
         "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
+        "all_time_high": info.get("allTimeHigh"),
+        "all_time_low": info.get("allTimeLow"),
         "profit_margin": info.get("profitMargins"),
         "shares_outstanding": info.get("sharesOutstanding"),
         "eps_ttm": info.get("epsTrailingTwelveMonths"),
         "eps_current_year": info.get("epsCurrentYear"),
         "forward_eps": info.get("forwardEps"),
+        "trailing_pe": info.get("trailingPE"),
+        "forward_pe": info.get("forwardPE"),
+        "price_to_book": info.get("priceToBook"),
+        "book_value": info.get("bookValue"),
+        "current_ratio": info.get("currentRatio"),
+        "quick_ratio": info.get("quickRatio"),
+        "debt_to_equity": info.get("debtToEquity"),
+        "return_on_equity": info.get("returnOnEquity"),
+        "free_cashflow": info.get("freeCashflow"),
         "last_fiscal_year_end": (
             datetime.fromtimestamp(info["lastFiscalYearEnd"]).date()
             if info.get("lastFiscalYearEnd") else None
@@ -520,20 +531,50 @@ def write_fundamentals_to_iceberg(snapshot_dict):
             market_cap DOUBLE,
             fifty_two_week_high DOUBLE,
             fifty_two_week_low DOUBLE,
+            all_time_high DOUBLE,
+            all_time_low DOUBLE,
             profit_margin DOUBLE,
             shares_outstanding DOUBLE,
             eps_ttm DOUBLE,
             eps_current_year DOUBLE,
             forward_eps DOUBLE,
+            trailing_pe DOUBLE,
+            forward_pe DOUBLE,
+            price_to_book DOUBLE,
+            book_value DOUBLE,
+            current_ratio DOUBLE,
+            quick_ratio DOUBLE,
+            debt_to_equity DOUBLE,
+            return_on_equity DOUBLE,
+            free_cashflow DOUBLE,
             last_fiscal_year_end DATE,
             next_fiscal_year_end DATE
         )
         USING iceberg
         PARTITIONED BY (symbol)
     """)
+
+    existing_cols = {c.name for c in spark.table(FUNDAMENTALS_TABLE).schema}
+    for col_name in [
+        "all_time_high", "all_time_low", "trailing_pe", "forward_pe",
+        "price_to_book", "book_value", "current_ratio", "quick_ratio",
+        "debt_to_equity", "return_on_equity", "free_cashflow",
+    ]:
+        if col_name not in existing_cols:
+            spark.sql(f"ALTER TABLE {FUNDAMENTALS_TABLE} ADD COLUMN {col_name} DOUBLE")
+
+    cols = [
+        "symbol", "fetched_at", "market_cap", "fifty_two_week_high", "fifty_two_week_low",
+        "all_time_high", "all_time_low", "profit_margin", "shares_outstanding",
+        "eps_ttm", "eps_current_year", "forward_eps", "trailing_pe", "forward_pe",
+        "price_to_book", "book_value", "current_ratio", "quick_ratio",
+        "debt_to_equity", "return_on_equity", "free_cashflow",
+        "last_fiscal_year_end", "next_fiscal_year_end",
+    ]
+    col_list = ", ".join(cols)
     spark.sql(f"""
-        INSERT INTO {FUNDAMENTALS_TABLE}
-        SELECT * FROM batch
+        INSERT INTO {FUNDAMENTALS_TABLE} ({col_list})
+        SELECT {col_list} FROM batch
     """)
 
 def get_latest_dates():
