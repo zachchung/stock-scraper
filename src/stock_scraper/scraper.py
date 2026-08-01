@@ -3,12 +3,13 @@
 
 import argparse
 import sys
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 
 import duckdb
 import pandas as pd
 import requests
 import yfinance as yf
+from dateutil.relativedelta import relativedelta
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, to_date
 
@@ -20,6 +21,8 @@ EARNINGS_TABLE = "local.stocks.earnings_dates"
 INCOME_TABLE = "local.stocks.income_statements"
 ANALYST_TARGETS_TABLE = "local.stocks.analyst_targets"
 ANALYST_UPGRADES_TABLE = "local.stocks.analyst_upgrades_downgrades"
+EPS_ESTIMATES_TABLE = "local.stocks.eps_estimates"
+FUNDAMENTALS_TABLE = "local.stocks.fundamentals_snapshot"
 
 INTRADAY_INTERVALS = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d", "30m": "60d", "60m": "730d", "1h": "730d"}
 DEFAULT_INTRADAY_INTERVAL = "1h"
@@ -91,6 +94,61 @@ def fetch_ohlcv_intraday(ticker, interval="1h", period="max", start_date=None, p
     df["interval"] = interval
     return df
 
+def get_fiscal_year_end(ticker):
+    """Return (last_fiscal_year_end, next_fiscal_year_end) dates for a ticker."""
+    stock = yf.Ticker(ticker)
+    info = stock.info
+    last = info.get("lastFiscalYearEnd")
+    nxt = info.get("nextFiscalYearEnd")
+    if not last or not nxt:
+        return None, None
+    return (
+        datetime.fromtimestamp(last).date(),
+        datetime.fromtimestamp(nxt).date(),
+    )
+
+def generate_fiscal_quarter_ends(fiscal_year_end, n=40):
+    """Generate fiscal quarter-end dates by stepping back 3 months from a
+    fiscal year-end. Returned list is descending (most recent first)."""
+    ends = []
+    d = fiscal_year_end
+    for _ in range(n):
+        ends.append(d)
+        d = d - relativedelta(months=3)
+    return ends
+
+def fiscal_labels_for_reports(report_dates, last_fye, next_fye):
+    """Map each report date to its fiscal period. Returns a DataFrame with
+    columns fiscal_period_end (date), fiscal_quarter (int), fiscal_year (int).
+
+    Each earnings report covers the fiscal quarter that ended most recently
+    before the report date. Quarter numbering uses the fiscal year-end as Q4,
+    stepping back 3 months per quarter.
+    """
+    if last_fye is None or next_fye is None:
+        return pd.DataFrame(index=report_dates.index)
+    qends = generate_fiscal_quarter_ends(next_fye)
+    rows = []
+    for rd in report_dates:
+        rd = rd.to_pydatetime().date() if hasattr(rd, "to_pydatetime") else rd
+        # fiscal period end = latest generated quarter end <= report date
+        period_end = next((q for q in qends if q <= rd), None)
+        if period_end is None:
+            rows.append((None, None, None))
+            continue
+        # fiscal year: the fiscal year that this quarter belongs to.
+        # next_fye is the FYE of the fiscal year ending after the report.
+        delta_months = (next_fye.year * 12 + next_fye.month) - (
+            period_end.year * 12 + period_end.month
+        )
+        # delta=0 -> Q4 (FYE quarter), 3 -> Q3, 6 -> Q2, 9 -> Q1
+        qnum = 4 - (delta_months % 12) // 3
+        fy = next_fye.year - delta_months // 12
+        rows.append((period_end, qnum, fy))
+    df = pd.DataFrame(rows, columns=["fiscal_period_end", "fiscal_quarter", "fiscal_year"])
+    df.index = list(report_dates)
+    return df
+
 def fetch_earnings(ticker):
     stock = yf.Ticker(ticker)
     ed = stock.earnings_dates
@@ -104,8 +162,13 @@ def fetch_earnings(ticker):
     )
     df["report_date"] = df["report_date"].dt.strftime("%Y-%m-%dT%H:%M:%S%z")
     df["symbol"] = ticker
+
+    last_fye, next_fye = get_fiscal_year_end(ticker)
+    labels = fiscal_labels_for_reports(ed.index, last_fye, next_fye)
+    df = df.join(labels.reset_index(drop=True))
     return df[["symbol", "report_date", "eps_estimate", "eps_actual",
-               "surprise_pct", "market_session"]]
+               "surprise_pct", "market_session", "fiscal_period_end",
+               "fiscal_quarter", "fiscal_year"]]
 
 INCOME_METRICS = [
     ("total_revenue", "Total Revenue"),
@@ -177,6 +240,60 @@ def fetch_upgrades_downgrades(ticker):
     return df[["symbol", "grade_date", "firm", "to_grade", "from_grade",
                "action", "price_target", "prior_price_target"]]
 
+EPS_ESTIMATE_PERIODS = {"0q": "current_quarter", "+1q": "next_quarter",
+                        "0y": "current_year", "+1y": "next_year"}
+
+def fetch_eps_estimates(ticker):
+    """Long-format consensus EPS estimates: 0q/+1q (quarters) and 0y/+1y (fiscal years)."""
+    stock = yf.Ticker(ticker)
+    ee = stock.earnings_estimate
+    if ee is None or ee.empty:
+        return None
+    fetched_at = datetime.now().strftime("%Y-%m-%dT%H:%M:%S%z")
+    rows = []
+    for period in ee.index:
+        if period not in EPS_ESTIMATE_PERIODS:
+            continue
+        r = ee.loc[period]
+        rows.append({
+            "symbol": ticker,
+            "fetched_at": fetched_at,
+            "period": period,
+            "period_label": EPS_ESTIMATE_PERIODS[period],
+            "eps_avg": r.get("avg"),
+            "eps_low": r.get("low"),
+            "eps_high": r.get("high"),
+            "num_analysts": r.get("numberOfAnalysts"),
+        })
+    if not rows:
+        return None
+    return pd.DataFrame(rows)
+
+def fetch_fundamentals_snapshot(ticker):
+    """Point-in-time valuation snapshot from Ticker.info."""
+    stock = yf.Ticker(ticker)
+    info = stock.info
+    return {
+        "symbol": ticker,
+        "fetched_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "market_cap": info.get("marketCap"),
+        "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
+        "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
+        "profit_margin": info.get("profitMargins"),
+        "shares_outstanding": info.get("sharesOutstanding"),
+        "eps_ttm": info.get("epsTrailingTwelveMonths"),
+        "eps_current_year": info.get("epsCurrentYear"),
+        "forward_eps": info.get("forwardEps"),
+        "last_fiscal_year_end": (
+            datetime.fromtimestamp(info["lastFiscalYearEnd"]).date()
+            if info.get("lastFiscalYearEnd") else None
+        ),
+        "next_fiscal_year_end": (
+            datetime.fromtimestamp(info["nextFiscalYearEnd"]).date()
+            if info.get("nextFiscalYearEnd") else None
+        ),
+    }
+
 def write_ohlcv_daily_to_iceberg(df):
     spark = get_spark()
     sdf = (
@@ -237,6 +354,7 @@ def write_earnings_to_iceberg(df):
     spark = get_spark()
     sdf = (
         spark.createDataFrame(df)
+        .withColumn("fiscal_period_end", to_date(col("fiscal_period_end")))
         .dropDuplicates(["symbol", "report_date"])
     )
     sdf.createOrReplaceTempView("batch")
@@ -248,11 +366,24 @@ def write_earnings_to_iceberg(df):
             eps_estimate DOUBLE,
             eps_actual DOUBLE,
             surprise_pct DOUBLE,
-            market_session STRING
+            market_session STRING,
+            fiscal_period_end DATE,
+            fiscal_quarter INT,
+            fiscal_year INT
         )
         USING iceberg
         PARTITIONED BY (symbol)
     """)
+
+    # Add columns to pre-existing tables created before the fiscal labels.
+    existing_cols = {c.name for c in spark.table(EARNINGS_TABLE).schema}
+    for col_name, col_type in [
+        ("fiscal_period_end", "DATE"),
+        ("fiscal_quarter", "INT"),
+        ("fiscal_year", "INT"),
+    ]:
+        if col_name not in existing_cols:
+            spark.sql(f"ALTER TABLE {EARNINGS_TABLE} ADD COLUMN {col_name} {col_type}")
 
     spark.sql(f"""
         MERGE INTO {EARNINGS_TABLE} AS target
@@ -346,6 +477,58 @@ def write_upgrades_downgrades_to_iceberg(df):
         WHEN NOT MATCHED THEN INSERT *
     """)
 
+def write_eps_estimates_to_iceberg(df):
+    spark = get_spark()
+    sdf = spark.createDataFrame(df).dropDuplicates(
+        ["symbol", "fetched_at", "period"])
+    sdf.createOrReplaceTempView("batch")
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {EPS_ESTIMATES_TABLE} (
+            symbol STRING,
+            fetched_at STRING,
+            period STRING,
+            period_label STRING,
+            eps_avg DOUBLE,
+            eps_low DOUBLE,
+            eps_high DOUBLE,
+            num_analysts INT
+        )
+        USING iceberg
+        PARTITIONED BY (symbol)
+    """)
+    spark.sql(f"""
+        INSERT INTO {EPS_ESTIMATES_TABLE}
+        SELECT * FROM batch
+    """)
+
+def write_fundamentals_to_iceberg(snapshot_dict):
+    spark = get_spark()
+    df = pd.DataFrame([snapshot_dict])
+    sdf = spark.createDataFrame(df)
+    sdf.createOrReplaceTempView("batch")
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {FUNDAMENTALS_TABLE} (
+            symbol STRING,
+            fetched_at STRING,
+            market_cap DOUBLE,
+            fifty_two_week_high DOUBLE,
+            fifty_two_week_low DOUBLE,
+            profit_margin DOUBLE,
+            shares_outstanding DOUBLE,
+            eps_ttm DOUBLE,
+            eps_current_year DOUBLE,
+            forward_eps DOUBLE,
+            last_fiscal_year_end DATE,
+            next_fiscal_year_end DATE
+        )
+        USING iceberg
+        PARTITIONED BY (symbol)
+    """)
+    spark.sql(f"""
+        INSERT INTO {FUNDAMENTALS_TABLE}
+        SELECT * FROM batch
+    """)
+
 def get_latest_dates():
     parquet_path = f"{WAREHOUSE_PATH}/stocks/ohlcv_daily/data/*/*.parquet"
     con = duckdb.connect()
@@ -390,6 +573,7 @@ def main():
     parser.add_argument("--prepost", action="store_true", default=False,
                         help="Include pre/post market data in intraday fetch (unreliable — yfinance artifact spikes)")
     parser.add_argument("--earnings", action="store_true", help="Fetch earnings dates and income statements")
+    parser.add_argument("--fundamentals", action="store_true", help="Fetch EPS estimates and fundamentals snapshot (market cap, 52w high/low, profit margin)")
     parser.add_argument("--targets", action="store_true", help="Fetch analyst consensus price targets only (snapshot, appended on each run)")
     parser.add_argument("--analyst", action="store_true", help="Fetch analyst price targets AND upgrades/downgrades (both)")
     parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
@@ -404,10 +588,11 @@ def main():
     do_ohlcv_daily = args.daily
     do_ohlcv_intraday = args.intraday
     do_earnings = args.earnings
+    do_fundamentals = args.fundamentals
     do_targets = args.targets
     do_analyst = args.analyst
 
-    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_targets and not do_analyst:
+    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_fundamentals and not do_targets and not do_analyst:
         parser.print_help()
         sys.exit(1)
 
@@ -473,6 +658,23 @@ def main():
                 print(f"[{i}/{total}] EARN {ticker} ({label.strip()}) done", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] EARN {ticker} FAILED: {e}", file=sys.stderr, flush=True)
+
+    if do_fundamentals:
+        total = len(tickers)
+        for i, ticker in enumerate(tickers, 1):
+            try:
+                parts = []
+                edf = fetch_eps_estimates(ticker)
+                if edf is not None and not edf.empty:
+                    write_eps_estimates_to_iceberg(edf)
+                    parts.append(f"eps_estimates({len(edf)})")
+                fund = fetch_fundamentals_snapshot(ticker)
+                if fund and fund.get("market_cap") is not None:
+                    write_fundamentals_to_iceberg(fund)
+                    parts.append("fundamentals")
+                print(f"[{i}/{total}] FUND {ticker} ({' '.join(parts)}) done", flush=True)
+            except Exception as e:
+                print(f"[{i}/{total}] FUND {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
     if do_targets or do_analyst:
         total = len(tickers)

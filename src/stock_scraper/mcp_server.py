@@ -55,6 +55,12 @@ def get_conn():
         analyst_upgrades_path = str(DATA_DIR / "stocks/analyst_upgrades_downgrades")
         if (DATA_DIR / "stocks/analyst_upgrades_downgrades/metadata").exists():
             con.execute(f"CREATE VIEW analyst_upgrades_downgrades AS SELECT * FROM iceberg_scan('{analyst_upgrades_path}')")
+        eps_estimates_path = str(DATA_DIR / "stocks/eps_estimates")
+        if (DATA_DIR / "stocks/eps_estimates/metadata").exists():
+            con.execute(f"CREATE VIEW eps_estimates AS SELECT * FROM iceberg_scan('{eps_estimates_path}')")
+        fundamentals_path = str(DATA_DIR / "stocks/fundamentals_snapshot")
+        if (DATA_DIR / "stocks/fundamentals_snapshot/metadata").exists():
+            con.execute(f"CREATE VIEW fundamentals_snapshot AS SELECT * FROM iceberg_scan('{fundamentals_path}')")
     except Exception:
         pass
 

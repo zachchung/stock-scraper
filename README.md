@@ -314,8 +314,6 @@ analyst_consensus_summary() -> str
   """Aggregate summary across all symbols: avg mean upside, analyst coverage, etc."""
 ```
 
-### Example Queries
-
 Once ingested, Claude can answer:
 
 - "What is the average analyst price target for AAPL vs its current price? Show the upside/downside percentages."
@@ -348,6 +346,84 @@ GOOGL analyst accuracy (688 past actions):
   avg actual worst 180d: -13.9%
   targets hit within 180d: 63.8% of the time
 ```
+
+## EPS Estimates & Fundamentals Extension
+
+### Motivation
+
+Support PE ratio analysis (TTM, last-fiscal-year, forward) and valuation snapshots.
+
+### Data Sources
+
+All data comes from **yfinance**:
+
+| Data | yfinance API | Description |
+|------|-------------|-------------|
+| Fiscal labels | `Ticker.info` (lastFiscalYearEnd / nextFiscalYearEnd) | fiscal_period_end / fiscal_quarter / fiscal_year per earnings report |
+| EPS Estimates | `Ticker.earnings_estimate` | Consensus EPS for current/next quarter (0q/+1q) and current/next fiscal year (0y/+1y) |
+| Fundamentals | `Ticker.info` | Market cap, 52-week high/low, profit margin, shares outstanding, EPS TTM/current-year/forward |
+
+### New/Changed Tables
+
+**Table: `local.stocks.earnings_dates`** (changed — added fiscal columns)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `symbol` | `STRING` | Ticker |
+| `report_date` | `STRING` | ISO-8601 earnings announcement timestamp |
+| `eps_estimate` | `DOUBLE` | Consensus estimate for that quarter |
+| `eps_actual` | `DOUBLE` | Reported EPS |
+| `surprise_pct` | `DOUBLE` | Actual vs estimate surprise % |
+| `market_session` | `STRING` | pre_market / during_market / post_market |
+| `fiscal_period_end` | `DATE` | Fiscal quarter end this report covers |
+| `fiscal_quarter` | `INT` | Fiscal quarter (1–4) |
+| `fiscal_year` | `INT` | Fiscal year |
+
+**Table: `local.stocks.eps_estimates`** (new — append snapshot per run, long format)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `symbol` | `STRING` | Ticker |
+| `fetched_at` | `STRING` | ISO-8601 timestamp of this snapshot |
+| `period` | `STRING` | `0q` / `+1q` / `0y` / `+1y` |
+| `period_label` | `STRING` | current_quarter / next_quarter / current_year / next_year |
+| `eps_avg` | `DOUBLE` | Consensus average EPS |
+| `eps_low` | `DOUBLE` | Consensus low EPS |
+| `eps_high` | `DOUBLE` | Consensus high EPS |
+| `num_analysts` | `INT` | Number of analysts covering |
+
+**Table: `local.stocks.fundamentals_snapshot`** (new — append snapshot per run)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `symbol` | `STRING` | Ticker |
+| `fetched_at` | `STRING` | ISO-8601 timestamp of this snapshot |
+| `market_cap` | `DOUBLE` | Market capitalization |
+| `fifty_two_week_high` | `DOUBLE` | 52-week high |
+| `fifty_two_week_low` | `DOUBLE` | 52-week low |
+| `profit_margin` | `DOUBLE` | Net profit margin |
+| `shares_outstanding` | `DOUBLE` | Shares outstanding |
+| `eps_ttm` | `DOUBLE` | Trailing twelve-month EPS |
+| `eps_current_year` | `DOUBLE` | Current fiscal year consensus EPS |
+| `forward_eps` | `DOUBLE` | Next fiscal year consensus EPS |
+| `last_fiscal_year_end` | `DATE` | Prior fiscal year end |
+| `next_fiscal_year_end` | `DATE` | Current fiscal year end |
+
+### Ingestion
+
+```bash
+# Earnings dates + income statements (also populates fiscal labels)
+python src/stock_scraper/scraper.py --earnings --tickers AAPL MSFT META
+
+# EPS estimates + fundamentals snapshot (appends one snapshot per symbol per run)
+python src/stock_scraper/scraper.py --fundamentals --tickers AAPL MSFT META
+```
+
+### Example Queries
+
+- "Compute TTM, last-fiscal-year, and forward PE for AAPL." (joins ohlcv + earnings_dates + eps_estimates)
+- "What's AAPL's market cap, 52-week high/low, and profit margin?"
+- "How has the forward EPS estimate for NVDA changed over the last month?" (eps_estimates history)
 
 ## Planned: Intraday / Hourly OHLCV Data
 
