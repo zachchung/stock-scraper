@@ -479,10 +479,10 @@ def write_ohlcv_daily_to_iceberg(df):
     spark = get_spark()
     if "asset" not in df.columns:
         df = df.copy()
-        df["asset"] = None
+        df["asset"] = ""
     if "name" not in df.columns:
         df = df.copy()
-        df["name"] = None
+        df["name"] = ""
     sdf = (
         spark.createDataFrame(df)
         .withColumn("date", to_date(col("date")))
