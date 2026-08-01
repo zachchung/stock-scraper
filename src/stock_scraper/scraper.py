@@ -10,7 +10,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 from dateutil.relativedelta import relativedelta
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, types as T
 from pyspark.sql.functions import col, to_date
 
 WAREHOUSE_PATH = "/Users/ZacharyChung1/code/stock_scraper/data"
@@ -274,37 +274,41 @@ def fetch_fundamentals_snapshot(ticker):
     """Point-in-time valuation snapshot from Ticker.info."""
     stock = yf.Ticker(ticker)
     info = stock.info
-    return {
-        "symbol": ticker,
-        "fetched_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "market_cap": info.get("marketCap"),
-        "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
-        "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
-        "all_time_high": info.get("allTimeHigh"),
-        "all_time_low": info.get("allTimeLow"),
-        "profit_margin": info.get("profitMargins"),
-        "shares_outstanding": info.get("sharesOutstanding"),
-        "eps_ttm": info.get("epsTrailingTwelveMonths"),
-        "eps_current_year": info.get("epsCurrentYear"),
-        "forward_eps": info.get("forwardEps"),
-        "trailing_pe": info.get("trailingPE"),
-        "forward_pe": info.get("forwardPE"),
-        "price_to_book": info.get("priceToBook"),
-        "book_value": info.get("bookValue"),
-        "current_ratio": info.get("currentRatio"),
-        "quick_ratio": info.get("quickRatio"),
-        "debt_to_equity": info.get("debtToEquity"),
-        "return_on_equity": info.get("returnOnEquity"),
-        "free_cashflow": info.get("freeCashflow"),
-        "last_fiscal_year_end": (
-            datetime.fromtimestamp(info["lastFiscalYearEnd"]).date()
-            if info.get("lastFiscalYearEnd") else None
-        ),
-        "next_fiscal_year_end": (
-            datetime.fromtimestamp(info["nextFiscalYearEnd"]).date()
-            if info.get("nextFiscalYearEnd") else None
-        ),
+    float_fields = {
+        "market_cap": "marketCap",
+        "fifty_two_week_high": "fiftyTwoWeekHigh",
+        "fifty_two_week_low": "fiftyTwoWeekLow",
+        "all_time_high": "allTimeHigh",
+        "all_time_low": "allTimeLow",
+        "profit_margin": "profitMargins",
+        "shares_outstanding": "sharesOutstanding",
+        "eps_ttm": "epsTrailingTwelveMonths",
+        "eps_current_year": "epsCurrentYear",
+        "forward_eps": "forwardEps",
+        "trailing_pe": "trailingPE",
+        "forward_pe": "forwardPE",
+        "price_to_book": "priceToBook",
+        "book_value": "bookValue",
+        "current_ratio": "currentRatio",
+        "quick_ratio": "quickRatio",
+        "debt_to_equity": "debtToEquity",
+        "return_on_equity": "returnOnEquity",
+        "free_cashflow": "freeCashflow",
     }
+    row = {"symbol": ticker,
+           "fetched_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S%z")}
+    for col_name, info_key in float_fields.items():
+        v = info.get(info_key)
+        row[col_name] = float(v) if v is not None else None
+    row["last_fiscal_year_end"] = (
+        datetime.fromtimestamp(info["lastFiscalYearEnd"]).date()
+        if info.get("lastFiscalYearEnd") else None
+    )
+    row["next_fiscal_year_end"] = (
+        datetime.fromtimestamp(info["nextFiscalYearEnd"]).date()
+        if info.get("nextFiscalYearEnd") else None
+    )
+    return row
 
 def write_ohlcv_daily_to_iceberg(df):
     spark = get_spark()
@@ -522,7 +526,32 @@ def write_eps_estimates_to_iceberg(df):
 def write_fundamentals_to_iceberg(snapshot_dict):
     spark = get_spark()
     df = pd.DataFrame([snapshot_dict])
-    sdf = spark.createDataFrame(df)
+    schema = T.StructType([
+        T.StructField("symbol", T.StringType()),
+        T.StructField("fetched_at", T.StringType()),
+        T.StructField("market_cap", T.DoubleType()),
+        T.StructField("fifty_two_week_high", T.DoubleType()),
+        T.StructField("fifty_two_week_low", T.DoubleType()),
+        T.StructField("all_time_high", T.DoubleType()),
+        T.StructField("all_time_low", T.DoubleType()),
+        T.StructField("profit_margin", T.DoubleType()),
+        T.StructField("shares_outstanding", T.DoubleType()),
+        T.StructField("eps_ttm", T.DoubleType()),
+        T.StructField("eps_current_year", T.DoubleType()),
+        T.StructField("forward_eps", T.DoubleType()),
+        T.StructField("trailing_pe", T.DoubleType()),
+        T.StructField("forward_pe", T.DoubleType()),
+        T.StructField("price_to_book", T.DoubleType()),
+        T.StructField("book_value", T.DoubleType()),
+        T.StructField("current_ratio", T.DoubleType()),
+        T.StructField("quick_ratio", T.DoubleType()),
+        T.StructField("debt_to_equity", T.DoubleType()),
+        T.StructField("return_on_equity", T.DoubleType()),
+        T.StructField("free_cashflow", T.DoubleType()),
+        T.StructField("last_fiscal_year_end", T.DateType()),
+        T.StructField("next_fiscal_year_end", T.DateType()),
+    ])
+    sdf = spark.createDataFrame(df, schema=schema)
     sdf.createOrReplaceTempView("batch")
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {FUNDAMENTALS_TABLE} (
