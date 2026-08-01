@@ -11,6 +11,8 @@ data_dir = f"{base_dir}/data/stocks/ohlcv_daily/data"
 symbol_dirs = sorted(os.path.basename(d) for d in glob.glob(f"{data_dir}/symbol=*"))
 symbols = [s.replace("symbol=", "") for s in symbol_dirs]
 equities = [s for s in symbols if not s.startswith("%5E") and "%3D" not in s]
+NON_SP500 = {"VOO", "BTC-USD", "ETH-USD"}
+sp500 = [s for s in equities if s not in NON_SP500]
 
 con = duckdb.connect()
 
@@ -100,10 +102,13 @@ summarize(symbols_summary, f"ALL {len(symbols)} tickers")
 eq_summary = {s: symbols_summary[s] for s in equities if s in symbols_summary}
 summarize(eq_summary, f"EQUITIES ONLY {len(eq_summary)} (excl. indices/futures)")
 
+sp_summary = {s: symbols_summary[s] for s in sp500 if s in symbols_summary}
+summarize(sp_summary, f"S&P 500 ONLY {len(sp_summary)}")
+
 print("== Per-symbol D10 detail (top 20 by signals) ==")
 per_sym = []
-for sym in sorted(eq_summary):
-    s = eq_summary[sym]
+for sym in sorted(sp_summary):
+    s = sp_summary[sym]
     t = s["trades_list"]["d10"]
     if not t:
         continue
