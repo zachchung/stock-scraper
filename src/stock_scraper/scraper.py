@@ -949,9 +949,9 @@ def main():
                 if eef is not None and not eef.empty:
                     n = write_eps_estimates_to_iceberg(eef) or 0
                     parts.append(f"eps_estimates+{n}")
-                print(f"[{i}/{total}] EARN {ticker} ({' '.join(parts)})", flush=True)
+                print(f"[{i}/{total}] EARNING {ticker} ({' '.join(parts)})", flush=True)
             except Exception as e:
-                print(f"[{i}/{total}] EARN {ticker} FAILED: {e}", file=sys.stderr, flush=True)
+                print(f"[{i}/{total}] EARNING {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
     if do_cashflow:
         total = len(tickers)
@@ -986,11 +986,11 @@ def main():
                 fund = fetch_fundamentals_snapshot(ticker)
                 if fund and fund.get("market_cap") is not None:
                     n = write_fundamentals_to_iceberg(fund) or 0
-                    print(f"[{i}/{total}] FUND {ticker} +{n} row(s)", flush=True)
+                    print(f"[{i}/{total}] FUNDAMENTAL {ticker} +{n} row(s)", flush=True)
                 else:
-                    print(f"[{i}/{total}] FUND {ticker} +0 rows", flush=True)
+                    print(f"[{i}/{total}] FUNDAMENTAL {ticker} +0 rows", flush=True)
             except Exception as e:
-                print(f"[{i}/{total}] FUND {ticker} FAILED: {e}", file=sys.stderr, flush=True)
+                print(f"[{i}/{total}] FUNDAMENTAL {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
     if do_targets or do_analyst:
         total = len(tickers)
