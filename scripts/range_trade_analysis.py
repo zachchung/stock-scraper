@@ -5,12 +5,15 @@ import duckdb
 symbol = sys.argv[1].upper() if len(sys.argv) > 1 else "META"
 
 top_n = None
+show_detail = False
 widths = [0.05, 0.10]
 for i, arg in enumerate(sys.argv):
     if arg == '--top' and i + 1 < len(sys.argv):
         top_n = int(sys.argv[i + 1])
     if arg == '--widths' and i + 1 < len(sys.argv):
         widths = [float(w) for w in sys.argv[i + 1].split(',')]
+    if arg == '--detail':
+        show_detail = True
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -99,13 +102,25 @@ def select_top_for_width(width, n):
     return selected
 
 
+def print_summary(width, results):
+    print(f"########## Width {width * 100:.1f}% ##########")
+    print()
+    print(f"{'Rank':<6} {'Entry':<10} {'Exit':<10} {'Trades':<8} {'Total P/L':<12}")
+    print("-" * 46)
+    for rank, (count, entry, exit_price, trades) in enumerate(results, 1):
+        total_pl = sum(sh - bl for _, bl, _, sh, _ in trades)
+        print(f"#{rank:<5} ${entry:<8.2f} ${exit_price:<8.2f} {count:<8} ${total_pl:<6.2f}")
+    print()
+
+
 if top_n:
     for width in widths:
-        print(f"########## Width {width * 100:.1f}% ##########")
-        print()
-        for rank, (count, entry, exit_price, trades) in enumerate(select_top_for_width(width, top_n), 1):
-            print_trades(f"#{rank} {symbol} Range", trades, entry, exit_price, width, count)
-            print()
+        results = select_top_for_width(width, top_n)
+        print_summary(width, results)
+        if show_detail:
+            for rank, (count, entry, exit_price, trades) in enumerate(results, 1):
+                print_trades(f"#{rank} {symbol} Range", trades, entry, exit_price, width, count)
+                print()
 else:
     for width in widths:
         best_count = -1
