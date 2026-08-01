@@ -32,60 +32,57 @@ mcp = FastMCP(
 
 def get_conn():
     con = duckdb.connect()
-    con.execute(f"CREATE VIEW ohlcv AS SELECT * FROM read_parquet('{OHLCV_GLOB}')")
+    con.execute("LOAD iceberg")
+    ohlcv_path = str(DATA_DIR / "stocks/ohlcv_daily")
+    if (DATA_DIR / "stocks/ohlcv_daily/metadata").exists():
+        con.execute(f"CREATE VIEW ohlcv AS SELECT * FROM iceberg_scan('{ohlcv_path}')")
+    else:
+        con.execute(f"CREATE VIEW ohlcv AS SELECT * FROM read_parquet('{OHLCV_GLOB}', union_by_name=True)")
 
     intraday_path = str(DATA_DIR / "stocks/ohlcv_intraday")
     if (DATA_DIR / "stocks/ohlcv_intraday/metadata").exists():
-        try:
-            con.execute("LOAD iceberg")
-            con.execute(f"CREATE VIEW ohlcv_intraday AS SELECT * FROM iceberg_scan('{intraday_path}')")
-        except Exception:
-            pass
+        con.execute(f"CREATE VIEW ohlcv_intraday AS SELECT * FROM iceberg_scan('{intraday_path}')")
     elif list((DATA_DIR / "stocks/ohlcv_intraday/data").glob("*/*.parquet")):
         con.execute(f"CREATE VIEW ohlcv_intraday AS SELECT * FROM read_parquet('{INTRADAY_GLOB}')")
 
-    try:
-        con.execute("LOAD iceberg")
-        con.execute(f"""
-            CREATE OR REPLACE VIEW yield_curve AS
-            SELECT date,
-                   MAX(CASE WHEN symbol='^TNX' THEN close END) AS y10,
-                   MAX(CASE WHEN symbol='^IRX' THEN close END) AS y3m,
-                   MAX(CASE WHEN symbol='^FVX' THEN close END) AS y5,
-                   MAX(CASE WHEN symbol='^TYX' THEN close END) AS y30,
-                   MAX(CASE WHEN symbol='^TNX' THEN close END)
-                     - MAX(CASE WHEN symbol='^IRX' THEN close END) AS spread_10y_3m,
-                   MAX(CASE WHEN symbol='^TNX' THEN close END)
-                     - MAX(CASE WHEN symbol='^FVX' THEN close END) AS spread_10y_5y
-            FROM (SELECT * FROM read_parquet('{OHLCV_GLOB}') WHERE source='macro')
-            GROUP BY date
-        """)
-        earnings_path = str(DATA_DIR / "stocks/earnings_dates")
-        if (DATA_DIR / "stocks/earnings_dates/metadata").exists():
-            con.execute(f"CREATE VIEW earnings_dates AS SELECT * FROM iceberg_scan('{earnings_path}')")
-        income_path = str(DATA_DIR / "stocks/income_statements")
-        if (DATA_DIR / "stocks/income_statements/metadata").exists():
-            con.execute(f"CREATE VIEW income_statements AS SELECT * FROM iceberg_scan('{income_path}')")
-        cashflow_path = str(DATA_DIR / "stocks/cashflow_statements")
-        if (DATA_DIR / "stocks/cashflow_statements/metadata").exists():
-            con.execute(f"CREATE VIEW cashflow_statements AS SELECT * FROM iceberg_scan('{cashflow_path}')")
-        balance_sheets_path = str(DATA_DIR / "stocks/balance_sheets")
-        if (DATA_DIR / "stocks/balance_sheets/metadata").exists():
-            con.execute(f"CREATE VIEW balance_sheets AS SELECT * FROM iceberg_scan('{balance_sheets_path}')")
-        analyst_targets_path = str(DATA_DIR / "stocks/analyst_targets")
-        if (DATA_DIR / "stocks/analyst_targets/metadata").exists():
-            con.execute(f"CREATE VIEW analyst_targets AS SELECT * FROM iceberg_scan('{analyst_targets_path}')")
-        analyst_upgrades_path = str(DATA_DIR / "stocks/analyst_upgrades_downgrades")
-        if (DATA_DIR / "stocks/analyst_upgrades_downgrades/metadata").exists():
-            con.execute(f"CREATE VIEW analyst_upgrades_downgrades AS SELECT * FROM iceberg_scan('{analyst_upgrades_path}')")
-        eps_estimates_path = str(DATA_DIR / "stocks/eps_estimates")
-        if (DATA_DIR / "stocks/eps_estimates/metadata").exists():
-            con.execute(f"CREATE VIEW eps_estimates AS SELECT * FROM iceberg_scan('{eps_estimates_path}')")
-        fundamentals_path = str(DATA_DIR / "stocks/fundamentals_snapshot")
-        if (DATA_DIR / "stocks/fundamentals_snapshot/metadata").exists():
-            con.execute(f"CREATE VIEW fundamentals_snapshot AS SELECT * FROM iceberg_scan('{fundamentals_path}')")
-    except Exception:
-        pass
+    con.execute(f"""
+        CREATE OR REPLACE VIEW yield_curve AS
+        SELECT date,
+               MAX(CASE WHEN symbol='^TNX' THEN close END) AS y10,
+               MAX(CASE WHEN symbol='^IRX' THEN close END) AS y3m,
+               MAX(CASE WHEN symbol='^FVX' THEN close END) AS y5,
+               MAX(CASE WHEN symbol='^TYX' THEN close END) AS y30,
+               MAX(CASE WHEN symbol='^TNX' THEN close END)
+                 - MAX(CASE WHEN symbol='^IRX' THEN close END) AS spread_10y_3m,
+               MAX(CASE WHEN symbol='^TNX' THEN close END)
+                 - MAX(CASE WHEN symbol='^FVX' THEN close END) AS spread_10y_5y
+        FROM ohlcv WHERE source='macro'
+        GROUP BY date
+    """)
+    earnings_path = str(DATA_DIR / "stocks/earnings_dates")
+    if (DATA_DIR / "stocks/earnings_dates/metadata").exists():
+        con.execute(f"CREATE VIEW earnings_dates AS SELECT * FROM iceberg_scan('{earnings_path}')")
+    income_path = str(DATA_DIR / "stocks/income_statements")
+    if (DATA_DIR / "stocks/income_statements/metadata").exists():
+        con.execute(f"CREATE VIEW income_statements AS SELECT * FROM iceberg_scan('{income_path}')")
+    cashflow_path = str(DATA_DIR / "stocks/cashflow_statements")
+    if (DATA_DIR / "stocks/cashflow_statements/metadata").exists():
+        con.execute(f"CREATE VIEW cashflow_statements AS SELECT * FROM iceberg_scan('{cashflow_path}')")
+    balance_sheets_path = str(DATA_DIR / "stocks/balance_sheets")
+    if (DATA_DIR / "stocks/balance_sheets/metadata").exists():
+        con.execute(f"CREATE VIEW balance_sheets AS SELECT * FROM iceberg_scan('{balance_sheets_path}')")
+    analyst_targets_path = str(DATA_DIR / "stocks/analyst_targets")
+    if (DATA_DIR / "stocks/analyst_targets/metadata").exists():
+        con.execute(f"CREATE VIEW analyst_targets AS SELECT * FROM iceberg_scan('{analyst_targets_path}')")
+    analyst_upgrades_path = str(DATA_DIR / "stocks/analyst_upgrades_downgrades")
+    if (DATA_DIR / "stocks/analyst_upgrades_downgrades/metadata").exists():
+        con.execute(f"CREATE VIEW analyst_upgrades_downgrades AS SELECT * FROM iceberg_scan('{analyst_upgrades_path}')")
+    eps_estimates_path = str(DATA_DIR / "stocks/eps_estimates")
+    if (DATA_DIR / "stocks/eps_estimates/metadata").exists():
+        con.execute(f"CREATE VIEW eps_estimates AS SELECT * FROM iceberg_scan('{eps_estimates_path}')")
+    fundamentals_path = str(DATA_DIR / "stocks/fundamentals_snapshot")
+    if (DATA_DIR / "stocks/fundamentals_snapshot/metadata").exists():
+        con.execute(f"CREATE VIEW fundamentals_snapshot AS SELECT * FROM iceberg_scan('{fundamentals_path}')")
 
     return con
 

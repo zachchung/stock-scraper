@@ -438,6 +438,23 @@ python src/stock_scraper/scraper.py --fundamentals --tickers AAPL MSFT META
 python src/stock_scraper/scraper.py --macro --period 10y
 ```
 
+## Iceberg snapshot maintenance
+Every ingestion run creates a new snapshot; old data files stay on disk until
+snapshots are expired, which can cause duplicate rows when reading via raw
+parquet globs. Query tables with `iceberg_scan(...)` (active snapshot only), and
+expire old snapshots to reclaim disk:
+
+```bash
+python -c "
+import sys; sys.path.insert(0, 'src')
+from stock_scraper.scraper import get_spark
+spark = get_spark()
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+spark.sql(f\"CALL local.system.expire_snapshots('stocks.ohlcv_daily', older_than => TIMESTAMP '{now}', retain_last => 1)\")
+"
+```
+
 ### Example Queries
 
 - "Compute TTM, last-fiscal-year, and forward PE for AAPL." (joins ohlcv + earnings_dates + eps_estimates)
