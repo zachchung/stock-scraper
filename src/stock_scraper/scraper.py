@@ -34,23 +34,24 @@ DEFAULT_INTRADAY_INTERVAL = "1h"
 VALID_PERIODS = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
 
 MACRO_TICKERS = [
-    ("^GSPC", "SP500"),
-    ("^IXIC", "NASDAQ"),
-    ("^NDX", "NASDAQ100"),
-    ("^DJI", "DOW"),
-    ("^RUT", "RUSSELL2000"),
-    ("^VIX", "VIX"),
-    ("^IRX", "UST_13W"),
-    ("^FVX", "UST_5Y"),
-    ("^TNX", "UST_10Y"),
-    ("^TYX", "UST_30Y"),
-    ("BTC-USD", "BITCOIN"),
-    ("ETH-USD", "ETHEREUM"),
-    ("GC=F", "GOLD"),
-    ("CL=F", "CRUDE_OIL"),
+    ("^GSPC", "INDEX", "S&P 500"),
+    ("^IXIC", "INDEX", "NASDAQ Composite"),
+    ("^NDX", "INDEX", "NASDAQ-100"),
+    ("^DJI", "INDEX", "Dow Jones Industrial Average"),
+    ("^RUT", "INDEX", "Russell 2000"),
+    ("^VIX", "INDEX", "VIX Volatility Index"),
+    ("^IRX", "TREASURY", "13-Week Treasury Yield"),
+    ("^FVX", "TREASURY", "5-Year Treasury Yield"),
+    ("^TNX", "TREASURY", "10-Year Treasury Yield"),
+    ("^TYX", "TREASURY", "30-Year Treasury Yield"),
+    ("BTC-USD", "CRYPTO", "Bitcoin"),
+    ("ETH-USD", "CRYPTO", "Ethereum"),
+    ("GC=F", "COMMODITY", "Gold Futures"),
+    ("CL=F", "COMMODITY", "Crude Oil Futures"),
 ]
-MACRO_TICKER_SYMBOLS = [s for s, _ in MACRO_TICKERS]
-MACRO_TICKER_NAMES = {s: n for s, n in MACRO_TICKERS}
+MACRO_TICKER_SYMBOLS = [s for s, _, _ in MACRO_TICKERS]
+MACRO_TICKER_ASSETS = {s: a for s, a, _ in MACRO_TICKERS}
+MACRO_TICKER_NAMES = {s: n for s, _, n in MACRO_TICKERS}
 
 SPARK = None
 
@@ -138,7 +139,8 @@ def fetch_macro_daily(period="max", start_date=None):
         df = h.reset_index()[["Date", "Open", "High", "Low", "Close", "Volume"]].copy()
         df.columns = ["date", "open", "high", "low", "close", "volume"]
         df["symbol"] = sym
-        df["asset"] = MACRO_TICKER_NAMES[sym]
+        df["asset"] = MACRO_TICKER_ASSETS[sym]
+        df["name"] = MACRO_TICKER_NAMES[sym]
         df["source"] = "macro"
         frames.append(df)
     if not frames:
@@ -478,6 +480,9 @@ def write_ohlcv_daily_to_iceberg(df):
     if "asset" not in df.columns:
         df = df.copy()
         df["asset"] = None
+    if "name" not in df.columns:
+        df = df.copy()
+        df["name"] = None
     sdf = (
         spark.createDataFrame(df)
         .withColumn("date", to_date(col("date")))
@@ -495,7 +500,8 @@ def write_ohlcv_daily_to_iceberg(df):
             close DOUBLE,
             volume LONG,
             source STRING,
-            asset STRING
+            asset STRING,
+            name STRING
         )
         USING iceberg
         PARTITIONED BY (symbol)
@@ -504,6 +510,8 @@ def write_ohlcv_daily_to_iceberg(df):
     existing_cols = {c.name for c in spark.table(OHLCV_TABLE_DAILY).schema}
     if "asset" not in existing_cols:
         spark.sql(f"ALTER TABLE {OHLCV_TABLE_DAILY} ADD COLUMN asset STRING")
+    if "name" not in existing_cols:
+        spark.sql(f"ALTER TABLE {OHLCV_TABLE_DAILY} ADD COLUMN name STRING")
 
     new_rows = count_new_rows(OHLCV_TABLE_DAILY, ["symbol", "date"])
     spark.sql(f"""
