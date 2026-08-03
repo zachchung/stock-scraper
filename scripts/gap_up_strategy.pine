@@ -1,0 +1,43 @@
+//@version=5
+// Gap-Up Strategy — buy after open gap-up, sell at close +N days, with fixed stop loss
+// Run on a DAILY chart.
+//
+// Strategy:
+//   Signal  : today's open gaps up more than `gapPct` vs yesterday's close
+//   Entry   : fills at the close of the gap day (Pine cannot fill at the bar's open;
+//             with process_orders_on_close=true all orders fill at bar close)
+//   Exit    : at the close of the entry day / +5 days / +10 days
+//   Stop    : fixed 5% below entry, no trailing (fills intrabar)
+//   Size    : $5,000 cash per trade
+strategy("Gap Up Strategy", overlay=true, initial_capital=100000,
+     default_qty_type=strategy.cash, default_qty_value=5000,
+     process_orders_on_close=true, pyramiding=0)
+
+gapPct   = input.float(3.0, "Gap-Up Threshold (%)", minval=0.1, step=0.5)
+stopPct  = input.float(5.0, "Stop Loss (% from entry)", minval=0.1, step=0.5)
+exitMode = input.string("Close +10 days", "Exit At",
+     options=["Close same day", "Close +5 days", "Close +10 days"])
+
+exitBars = exitMode == "Close +5 days"  ? 5
+         : exitMode == "Close +10 days" ? 10
+         : 1   // same day = close on the first full day held (day after the gap)
+
+gapUp = open >= close[1] * (1 + gapPct / 100.0)
+
+var int entryBar = na
+
+if strategy.position_size == 0 and gapUp
+    strategy.entry("Long", strategy.long)
+    entryBar := bar_index
+
+if strategy.position_size > 0
+    if na(entryBar)
+        entryBar := bar_index
+    strategy.exit("Stop", from_entry="Long",
+         stop=strategy.position_avg_price * (1 - stopPct / 100.0))
+    if bar_index >= entryBar + exitBars
+        strategy.close("Long", comment="Exit D+" + str.tostring(exitBars))
+
+// Visualization
+plotshape(gapUp, title="Gap Up", style=shape.triangleup,
+     location=location.belowbar, color=color.green, size=size.small)
