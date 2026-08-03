@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import duckdb
 import pandas as pd
@@ -6,6 +7,16 @@ import pandas as pd
 GAP_PCT = 0.03
 STOP_PCT = 0.05
 CAPITAL = 5000.0
+
+for i, arg in enumerate(sys.argv):
+    if arg == '--gap' and i + 1 < len(sys.argv):
+        GAP_PCT = float(sys.argv[i + 1])
+    if arg == '--months' and i + 1 < len(sys.argv):
+        RECENT_MONTHS = int(sys.argv[i + 1])
+    if arg == '--stop' and i + 1 < len(sys.argv):
+        STOP_PCT = float(sys.argv[i + 1])
+
+RECENT_MONTHS = locals().get('RECENT_MONTHS', None)
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = f"{base_dir}/data/stocks/ohlcv_daily/data"
@@ -127,9 +138,10 @@ sp_summary = {s: symbols_summary[s] for s in sp500 if s in symbols_summary}
 summarize(horizon_trades(sp_summary), f"S&P 500 ONLY {len(sp_summary)}")
 
 end_date = max(tr["buy_date"] for s in sp_summary.values() for k in horizon_keys for tr in s["trades_list"][k])
-print("== S&P 500 ONLY — RECENT WINDOWS ==")
+windows = [(RECENT_MONTHS, f"Last {RECENT_MONTHS} Months")] if RECENT_MONTHS else [(3, "Last 3 Months"), (6, "Last 6 Months"), (12, "Last 1 Year")]
+print(f"== S&P 500 ONLY — RECENT WINDOWS ==")
 print(f"(reference end date: {end_date}, trades filtered by buy date)")
-for months, label in [(3, "Last 3 Months"), (6, "Last 6 Months"), (12, "Last 1 Year")]:
+for months, label in windows:
     cutoff = end_date - pd.DateOffset(months=months)
     filtered = {}
     for k in horizon_keys:
