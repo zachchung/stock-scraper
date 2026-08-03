@@ -96,11 +96,12 @@ print(f"Entry: open gap-up >{GAP_PCT*100:.0f}% vs prev close | Stop loss: {STOP_
 print()
 
 horizon_names = {"same_day": "Same-Day Close", "d5": "Close +5 Days", "d10": "Close +10 Days"}
+horizon_keys = ["same_day", "d5", "d10"]
 
-def summarize(rows, label):
+def summarize(trades_by_horizon, label):
     print(f"== {label} ==")
-    for key in ["same_day", "d5", "d10"]:
-        t = [tr for s in rows.values() for tr in s["trades_list"][key]]
+    for key in horizon_keys:
+        t = trades_by_horizon[key]
         n = len(t)
         if n == 0:
             print(f"  {horizon_names[key]}: no trades")
@@ -114,13 +115,34 @@ def summarize(rows, label):
         print(f"  {horizon_names[key]:<16} trades={n:<6} win_ratio={win_rate:5.1f}%  avg=${avg_pnl:>8,.0f} ({avg_pct:+.2f}%)  total=${total_pnl:>11,.0f}  stopped={stopped}")
     print()
 
-summarize(symbols_summary, f"ALL {len(symbols)} tickers")
+def horizon_trades(rows):
+    return {k: [tr for s in rows.values() for tr in s["trades_list"][k]] for k in horizon_keys}
+
+summarize(horizon_trades(symbols_summary), f"ALL {len(symbols)} tickers")
 
 eq_summary = {s: symbols_summary[s] for s in equities if s in symbols_summary}
-summarize(eq_summary, f"EQUITIES ONLY {len(eq_summary)} (excl. indices/futures)")
+summarize(horizon_trades(eq_summary), f"EQUITIES ONLY {len(eq_summary)} (excl. indices/futures)")
 
 sp_summary = {s: symbols_summary[s] for s in sp500 if s in symbols_summary}
-summarize(sp_summary, f"S&P 500 ONLY {len(sp_summary)}")
+summarize(horizon_trades(sp_summary), f"S&P 500 ONLY {len(sp_summary)}")
+
+end_date = max(tr["buy_date"] for s in sp_summary.values() for k in horizon_keys for tr in s["trades_list"][k])
+print("== S&P 500 ONLY — RECENT WINDOWS ==")
+print(f"(reference end date: {end_date}, trades filtered by buy date)")
+for months, label in [(3, "Last 3 Months"), (6, "Last 6 Months"), (12, "Last 1 Year")]:
+    cutoff = end_date - pd.DateOffset(months=months)
+    filtered = {}
+    for k in horizon_keys:
+        filtered[k] = [tr for s in sp_summary.values() for tr in s["trades_list"][k] if tr["buy_date"] >= cutoff]
+    summarize(filtered, label)
+    sig = sorted(
+        ((sym, sum(1 for k in horizon_keys for tr in sp_summary[sym]["trades_list"][k] if tr["buy_date"] >= cutoff))
+         for sym in sp_summary),
+        key=lambda x: -x[1])
+    sig = [(s, c) for s, c in sig if c > 0]
+    if sig:
+        print("  Signals by symbol: " + ", ".join(f"{s}={c}" for s, c in sig))
+    print()
 
 print("== Per-symbol D10 detail (top 20 by signals) ==")
 per_sym = []
