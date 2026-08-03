@@ -4,6 +4,7 @@ import duckdb
 import pandas as pd
 
 GAP_PCT = 0.03
+STOP_PCT = 0.05
 CAPITAL = 5000.0
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,8 +22,8 @@ for sym in symbols:
     path = f"{data_dir}/symbol={sym}/*.parquet"
     try:
         df = con.execute(f"""
-            SELECT date, FIRST(open) AS open, FIRST(close) AS close
-            FROM (SELECT DISTINCT date, open, close FROM read_parquet('{path}'))
+            SELECT date, FIRST(open) AS open, FIRST(low) AS low, FIRST(close) AS close
+            FROM (SELECT DISTINCT date, open, low, close FROM read_parquet('{path}'))
             GROUP BY date
             ORDER BY date
         """).fetchdf()
@@ -51,11 +52,24 @@ for sym, df in data.groupby("symbol", sort=False):
         entry = df.at[i, "open"]
         if pd.isna(entry) or entry <= 0:
             continue
+        stop = entry * (1 - STOP_PCT)
         for label, offset in [("same_day", 0), ("d5", 5), ("d10", 10)]:
-            j = i + offset
-            if j >= len(df):
+            target = i + offset
+            if target >= len(df):
                 continue
-            exit_px = df.at[j, "close"]
+            exit_px = None
+            exit_date = None
+            for j in range(i, target + 1):
+                if j >= len(df):
+                    break
+                low = df.at[j, "low"]
+                if not pd.isna(low) and low <= stop:
+                    exit_px = stop
+                    exit_date = df.at[j, "date"]
+                    break
+            if exit_px is None:
+                exit_px = df.at[target, "close"]
+                exit_date = df.at[target, "date"]
             if pd.isna(exit_px):
                 continue
             pnl_pct = exit_px / entry - 1
@@ -63,7 +77,7 @@ for sym, df in data.groupby("symbol", sort=False):
                 "symbol": sym,
                 "buy_date": df.at[i, "date"],
                 "entry": entry,
-                "sell_date": df.at[j, "date"],
+                "sell_date": exit_date,
                 "exit": exit_px,
                 "pnl_pct": pnl_pct,
                 "pnl_usd": CAPITAL * pnl_pct,
@@ -78,6 +92,7 @@ for sym, df in data.groupby("symbol", sort=False):
 
 print(f"Symbols analyzed: {len(symbols)}")
 print(f"Date range: {data['date'].min()} to {data['date'].max()}")
+print(f"Entry: open gap-up >{GAP_PCT*100:.0f}% vs prev close | Stop loss: {STOP_PCT*100:.0f}% | ${CAPITAL:,.0f}/trade")
 print()
 
 horizon_names = {"same_day": "Same-Day Close", "d5": "Close +5 Days", "d10": "Close +10 Days"}
@@ -94,7 +109,9 @@ def summarize(rows, label):
         win_rate = wins / n * 100
         total_pnl = sum(tr["pnl_usd"] for tr in t)
         avg_pnl = total_pnl / n
-        print(f"  {horizon_names[key]:<16} trades={n:<6} win_ratio={win_rate:5.1f}%  avg=${avg_pnl:>9,.0f}  total=${total_pnl:>12,.0f}")
+        avg_pct = sum(tr["pnl_pct"] for tr in t) / n * 100
+        stopped = sum(1 for tr in t if tr["exit"] <= tr["entry"] * (1 - STOP_PCT) + 1e-9)
+        print(f"  {horizon_names[key]:<16} trades={n:<6} win_ratio={win_rate:5.1f}%  avg=${avg_pnl:>8,.0f} ({avg_pct:+.2f}%)  total=${total_pnl:>11,.0f}  stopped={stopped}")
     print()
 
 summarize(symbols_summary, f"ALL {len(symbols)} tickers")
