@@ -171,30 +171,32 @@ def normalize(df, tolerance):
 
 
 def dedupe(df):
-    """Collapse dollar-equivalent rows on the same ticker+date into one event.
-
-    Handles the case where the same purchase was recorded in two bases
-    (e.g. '1 @ 2869' raw and '20 @ 143.4' adjusted both present). These are the
-    SAME economic event and must only count once. Keeps the first occurrence and
-    flags the rest."""
+    """Collapse rows that are the SAME economic event recorded in two split
+    bases on the same ticker+date (e.g. '1 @ 2869' raw and '20 @ 143.4'
+    adjusted). These have an equal dollar cost BUT very different share counts
+    (differing by the split factor). Only this signature is collapsed; equal-
+    share, near-identical-priced same-day transactions are genuine and kept."""
     out = df.copy()
     out["skip"] = False
     out["dup_of"] = None
     for (tkr, d), g in out.groupby(["ticker", out["date"].dt.date]):
-        # dollar-equivalence within the (ticker,date) group
         g = g.sort_values("shares")
         seen = []
         for idx, row in g.iterrows():
             val = row["shares"] * row["price"]
             match = False
-            for sv in seen:
-                if abs(val - sv) / max(val, 1e-9) < 0.01:
+            for sv, sv_shares in seen:
+                same_dollar = abs(val - sv) / max(sv, 1e-9) < 0.001
+                # share counts must be VERY different (split-scale), not ~equal
+                ratio = max(row["shares"], sv_shares) / max(min(row["shares"], sv_shares), 1e-9)
+                split_diff = ratio >= 1.5
+                if same_dollar and split_diff:
                     out.at[idx, "skip"] = True
                     out.at[idx, "dup_of"] = f"${sv:,.2f} on {d}"
                     match = True
                     break
             if not match:
-                seen.append(val)
+                seen.append((val, row["shares"]))
     return out[~out["skip"]].copy(), out[out["skip"]].copy()
 
 
@@ -221,7 +223,7 @@ def build_snapshot(reconciled, date):
                 rem -= take
                 if head["shares"] <= 1e-9:
                     open_pos[tkr].pop(0)
-            proceeds = canon * t["price"]
+            proceeds = t["cost_basis"]  # true dollar proceeds (split-invariant)
             if sold_cost > 0:
                 realized[tkr] = realized.get(tkr, 0.0) + (proceeds - sold_cost)
             if rem > 1e-9:
@@ -255,7 +257,6 @@ def main():
 
     df = load_transactions(args.input)
     rec = normalize(df, args.tolerance)
-    rec, skipped = dedupe(rec)
     snap_date = pd.Timestamp(args.date)
     holdings, realized, over_sell = build_snapshot(rec, snap_date)
     flagged = rec[rec["flag_reason"] != ""]
@@ -302,13 +303,6 @@ def main():
         for _, r in flagged.iterrows():
             print(f"  {r['date'].date()} {r['ticker']:<6}{r['side']:<5}"
                   f"{r['shares']:>10.4f} @ {r['price']:,.2f}  -> {r['flag_reason']}")
-
-    if len(skipped):
-        print("\nDROPPED AS DUPLICATE (same dollar value, same date/ticker — same event in two bases):")
-        print("-" * 78)
-        for _, r in skipped.iterrows():
-            print(f"  {r['date'].date()} {r['ticker']:<6}{r['side']:<5}"
-                  f"{r['shares']:>10.4f} @ {r['price']:,.2f}  (dup of {r['dup_of']})")
 
     total_pnl = (tot_val - tot_cost) + sum(realized.values()) if holdings else sum(realized.values())
     print("=" * 78)
