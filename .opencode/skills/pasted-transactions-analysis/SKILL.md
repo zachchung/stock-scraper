@@ -62,21 +62,41 @@ Rules:
    | Unrealized P&L | +$394.17 (+2.5%) | +$5,591.39 (+53.6%) |
    | Realized P&L | +$8,656.92 | +$3,459.70 |
    | Total P&L ($) | +$9,051.09 | +$9,051.09 |
+   | Avg Net Cost $ | 154.99 | 154.99 |
 
    **ALWAYS show Total P&L in dollar amount** as the last row (Total P&L =
    realized + unrealized). Total P&L must be identical for FIFO and LIFO
    (matching method only shifts P&L between realized and unrealized) — use it
    as a sanity check. Pull shares/cost/value/unrealized/realized from each run's
    output (Total P&L = NET P&L line at the bottom of the script output).
+   Avg Net Cost $ = (Cost basis − Realized P&L) / Shares held and is also
+   method-invariant (same for FIFO and LIFO).
 
    For **multi-symbol** pastes, show a per-symbol table with a **Total P&L $
-   column** (Total P&L = realized + unrealized, per symbol), plus a TOTAL row:
+   column** (Total P&L = realized + unrealized, per symbol) and an **Avg Net
+   Cost $ column**, plus a TOTAL row:
 
-   | Ticker | Shares | Cost $ | Value $ | Unrealized $ | Realized $ | Total P&L $ |
-   |---|---|---|---|---|---|---|
-   | GOOGL | 45 | 15,631.68 | 16,025.85 | +394.17 | +8,656.92 | +9,051.09 |
-   | AMZN | 44 | 9,304.82 | 11,949.52 | +2,644.70 | +2,664.88 | +5,309.58 |
-   | TOTAL | | 61,121.96 | 71,470.19 | +10,348.23 | +21,884.81 | +32,233.04 |
+   | Ticker | Shares | Cost $ | Value $ | Unrealized $ | Realized $ | Total P&L $ | Avg Net Cost $ |
+   |---|---|---|---|---|---|---|---|
+   | GOOGL | 45 | 15,631.68 | 16,025.85 | +394.17 | +8,656.92 | +9,051.09 | 154.99 |
+   | AMZN | 44 | 9,304.82 | 11,949.52 | +2,644.70 | +2,664.88 | +5,309.58 | 150.91 |
+   | TOTAL | | 61,121.96 | 71,470.19 | +10,348.23 | +21,884.81 | +32,233.04 | |
+
+   **ALWAYS include the Avg Net Cost $ column in the output table.**
+
+   Derivation of Avg Net Cost $ (method-invariant):
+   ```
+   Avg Net Cost = (Cost basis − Realized P&L) / Shares held
+               = (Total invested − Total proceeds) / Shares held
+   ```
+   - `Cost basis` = remaining cost of shares still held (the `Cost $` column).
+   - `Realized P&L` = proceeds minus cost of sold shares.
+   - Because `Cost basis − Realized P&L = Total invested − Total proceeds`,
+     this equals the net cash deployed into the position per share still held,
+     and it is IDENTICAL for FIFO and LIFO (matching method only shifts P&L
+     between realized and unrealized). Use this invariance as a sanity check.
+   - Can be negative (e.g. NVDA −$5.80) when cumulative sale proceeds exceed
+     cumulative purchase dollars while shares are still held.
 
    Then the FIFO-vs-LIFO summary across the whole portfolio (with Total P&L $
    as the last row). If any rows are FLAGGED in the output, list them with the
