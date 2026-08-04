@@ -61,17 +61,27 @@ Rules:
    | Market value | $16,025.85 | $16,025.85 |
    | Unrealized P&L | +$394.17 (+2.5%) | +$5,591.39 (+53.6%) |
    | Realized P&L | +$8,656.92 | +$3,459.70 |
-   | Net P&L | +$9,051.09 | +$9,051.09 |
+   | Total P&L ($) | +$9,051.09 | +$9,051.09 |
 
-   Pull shares/cost/value/unrealized/realized from each run's output. Net P&L
-   must be identical for FIFO and LIFO (matching method only shifts P&L between
-   realized and unrealized) — use it as a sanity check.
+   **ALWAYS show Total P&L in dollar amount** as the last row (Total P&L =
+   realized + unrealized). Total P&L must be identical for FIFO and LIFO
+   (matching method only shifts P&L between realized and unrealized) — use it
+   as a sanity check. Pull shares/cost/value/unrealized/realized from each run's
+   output (Total P&L = NET P&L line at the bottom of the script output).
 
-   For **multi-symbol** pastes, show a per-symbol table (Ticker / Shares / Cost /
-   Value / Unrealized / P&L %) plus TOTAL from each run, and then the
-   FIFO-vs-LIFO summary across the whole portfolio. If any rows are FLAGGED in
-   the output, list them with the reason and explain that their basis was
-   estimated via the split-invariant dollar/adjusted-close fallback.
+   For **multi-symbol** pastes, show a per-symbol table with a **Total P&L $
+   column** (Total P&L = realized + unrealized, per symbol), plus a TOTAL row:
+
+   | Ticker | Shares | Cost $ | Value $ | Unrealized $ | Realized $ | Total P&L $ |
+   |---|---|---|---|---|---|---|
+   | GOOGL | 45 | 15,631.68 | 16,025.85 | +394.17 | +8,656.92 | +9,051.09 |
+   | AMZN | 44 | 9,304.82 | 11,949.52 | +2,644.70 | +2,664.88 | +5,309.58 |
+   | TOTAL | | 61,121.96 | 71,470.19 | +10,348.23 | +21,884.81 | +32,233.04 |
+
+   Then the FIFO-vs-LIFO summary across the whole portfolio (with Total P&L $
+   as the last row). If any rows are FLAGGED in the output, list them with the
+   reason and explain that their basis was estimated via the split-invariant
+   dollar/adjusted-close fallback.
 
 ## Implementation notes (script behavior)
 
