@@ -97,21 +97,24 @@ if high_pts:
                color="#d62728", s=28, marker="v", zorder=5, label="Swing high")
 
 xmin, xmax = mdates.date2num(df["date"].iloc[0]), mdates.date2num(df["date"].iloc[-1])
+project_days = int(years * 365.25 * 0.1)
+x_extend = xmax + project_days
 for t in low_lines[:3]:
     touches, mdev, m, c, x1, y1, x2, y2 = t
-    xs = np.array([x1, x2])
+    xs = np.array([x1, x_extend])
     ys = m * xs + c
     ax.plot(mdates.num2date(xs), ys, color="#2ca02c", lw=1.8, ls="--",
             label=f"Support ({touches} touches)")
 for t in high_lines[:3]:
     touches, mdev, m, c, x1, y1, x2, y2 = t
-    xs = np.array([x1, x2])
+    xs = np.array([x1, x_extend])
     ys = m * xs + c
     ax.plot(mdates.num2date(xs), ys, color="#d62728", lw=1.8, ls="--",
             label=f"Resistance ({touches} touches)")
 
 ax.set_title(f"{symbol} Trendlines ({df['date'].iloc[0].date()} - {df['date'].iloc[-1].date()})")
 ax.set_ylabel("Price ($)")
+ax.set_xlim(mdates.num2date(xmin), mdates.num2date(x_extend))
 ax.legend(loc="upper left", fontsize=8)
 ax.grid(alpha=0.3)
 plt.tight_layout()
