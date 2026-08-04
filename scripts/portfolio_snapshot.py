@@ -200,7 +200,7 @@ def dedupe(df):
     return out[~out["skip"]].copy(), out[out["skip"]].copy()
 
 
-def build_snapshot(reconciled, date):
+def build_snapshot(reconciled, date, method="fifo"):
     txs = reconciled[reconciled["date"] <= pd.Timestamp(date)].copy()
     realized = {}
     open_pos = {}
@@ -215,14 +215,16 @@ def build_snapshot(reconciled, date):
         else:
             rem = canon
             sold_cost = 0.0
-            while rem > 1e-9 and open_pos.get(tkr):
-                head = open_pos[tkr][0]
+            lots = open_pos.get(tkr, [])
+            while rem > 1e-9 and lots:
+                idx = 0 if method.lower() == "fifo" else len(lots) - 1
+                head = lots[idx]
                 take = min(rem, head["shares"])
                 sold_cost += take * head["cost"]
                 head["shares"] -= take
                 rem -= take
                 if head["shares"] <= 1e-9:
-                    open_pos[tkr].pop(0)
+                    lots.pop(idx)
             proceeds = t["cost_basis"]  # true dollar proceeds (split-invariant)
             if sold_cost > 0:
                 realized[tkr] = realized.get(tkr, 0.0) + (proceeds - sold_cost)
@@ -247,11 +249,11 @@ def build_snapshot(reconciled, date):
     return holdings, realized, over_sell
 
 
-def monthly_report(df, rec, tolerance, max_date):
+def monthly_report(df, rec, tolerance, max_date, method="fifo"):
     """Print holdings + PnL at the end of every month from first trade to max_date."""
     first = rec["date"].min().to_period("M")
     last = pd.Timestamp(max_date).to_period("M")
-    print(f"\nMonthly snapshots ({first} -> {last})")
+    print(f"\nMonthly snapshots ({first} -> {last}) [{method.upper()}]")
     print("=" * 88)
     print(f"{'Month End':<12}{'Shares':>9}{'Cost $':>13}{'Value $':>13}"
           f"{'Unreal. $':>12}{'Realized $':>12}{'Net P&L $':>12}")
@@ -259,7 +261,7 @@ def monthly_report(df, rec, tolerance, max_date):
     period = first
     while period <= last:
         month_end = period.to_timestamp("M")
-        holdings, realized, _ = build_snapshot(rec, month_end)
+        holdings, realized, _ = build_snapshot(rec, month_end, method)
         shares = sum(h["shares"] for h in holdings)
         cost = sum(h["cost_basis"] for h in holdings)
         val = sum(h["market_value"] for h in holdings if h["market_value"] is not None)
@@ -279,17 +281,19 @@ def main():
                     help="Match tolerance raw vs adjusted price (fraction)")
     ap.add_argument("--monthly", action="store_true",
                     help="Show month-end holdings + PnL since first purchase")
+    ap.add_argument("--method", choices=["fifo", "lifo"], default="fifo",
+                    help="Lot-matching method for realized PnL (default: fifo)")
     args = ap.parse_args()
 
     df = load_transactions(args.input)
     rec = normalize(df, args.tolerance)
 
     if args.monthly:
-        monthly_report(df, rec, args.tolerance, args.date)
+        monthly_report(df, rec, args.tolerance, args.date, args.method)
         return
 
     snap_date = pd.Timestamp(args.date)
-    holdings, realized, over_sell = build_snapshot(rec, snap_date)
+    holdings, realized, over_sell = build_snapshot(rec, snap_date, args.method)
     flagged = rec[rec["flag_reason"] != ""]
 
     print(f"\nSnapshot date: {snap_date.date()}")
@@ -313,7 +317,7 @@ def main():
         print(f"{'TOTAL':<8}{'':>12}{tot_cost:>14,.2f}{tot_val:>14,.2f}{tot_pnl:>14,.2f}{pct:>8.1f}%")
 
     if realized:
-        print("\nREALIZED P&L (FIFO, up to snapshot date):")
+        print(f"\nREALIZED P&L ({args.method.upper()}, up to snapshot date):")
         print("-" * 78)
         for tkr, val in sorted(realized.items()):
             print(f"  {tkr:<8}{val:+,.2f}")
