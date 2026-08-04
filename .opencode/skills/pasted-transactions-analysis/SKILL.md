@@ -11,8 +11,9 @@ description: >
 
 # Pasted Transactions Analysis
 
-Analyzes a pasted trade-history block for a single ticker (typically GOOGL) and
-produces holdings + PnL as of today, shown as a FIFO vs LIFO comparison table.
+Analyzes a pasted trade-history block for ONE OR MULTIPLE tickers (GOOGL,
+AMZN, MSFT, AAPL, etc.) and produces holdings + PnL as of today, shown as a
+FIFO vs LIFO comparison table per symbol and for the whole portfolio.
 
 ## Paste structure (the rules)
 
@@ -25,6 +26,10 @@ GOOGL\tBUY\t<price>\t<shares>\t<amount>\t<date>\t<ignore>\tGOOGL\tSELL\t<price>\
 Rules:
 - **Left side = BUY, right side = SELL.** Buy-only rows have the SELL side
   empty (no price/shares on the right) => those shares are still held.
+- **Multi-symbol**: each line carries its own ticker in columns 0 and 7
+  (both sides share the same ticker). Blocks of lines for different tickers
+  are separated by blank spacer rows (`\tBUY\t...\tSELL\t...`) and optional
+  section labels (e.g. `Large cap & pe <100`) — these are skipped.
 - Dates are `YY-M/D` (e.g. `26-7/31` => `2026-07-31`, `19-6/3` => `2019-06-03`).
 - Amounts/shares may contain commas (e.g. `1,037.00`).
 - **No duplicated data, do NOT dedup.** Every row is a distinct trade. Two BUY
@@ -47,7 +52,7 @@ Rules:
    .venv/bin/python scripts/portfolio_snapshot.py --input txs.csv --date 2026-08-04 --method lifo
    ```
    `--date` = today (the last trade date in the data / current date).
-3. **Present the comparison table**, always in this format:
+3. **Present the comparison table**, always in this format (single symbol):
 
    | | FIFO | LIFO |
    |---|---|---|
@@ -61,6 +66,12 @@ Rules:
    Pull shares/cost/value/unrealized/realized from each run's output. Net P&L
    must be identical for FIFO and LIFO (matching method only shifts P&L between
    realized and unrealized) — use it as a sanity check.
+
+   For **multi-symbol** pastes, show a per-symbol table (Ticker / Shares / Cost /
+   Value / Unrealized / P&L %) plus TOTAL from each run, and then the
+   FIFO-vs-LIFO summary across the whole portfolio. If any rows are FLAGGED in
+   the output, list them with the reason and explain that their basis was
+   estimated via the split-invariant dollar/adjusted-close fallback.
 
 ## Implementation notes (script behavior)
 
