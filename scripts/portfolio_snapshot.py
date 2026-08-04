@@ -247,16 +247,47 @@ def build_snapshot(reconciled, date):
     return holdings, realized, over_sell
 
 
+def monthly_report(df, rec, tolerance, max_date):
+    """Print holdings + PnL at the end of every month from first trade to max_date."""
+    first = rec["date"].min().to_period("M")
+    last = pd.Timestamp(max_date).to_period("M")
+    print(f"\nMonthly snapshots ({first} -> {last})")
+    print("=" * 88)
+    print(f"{'Month End':<12}{'Shares':>9}{'Cost $':>13}{'Value $':>13}"
+          f"{'Unreal. $':>12}{'Realized $':>12}{'Net P&L $':>12}")
+    print("-" * 88)
+    period = first
+    while period <= last:
+        month_end = period.to_timestamp("M")
+        holdings, realized, _ = build_snapshot(rec, month_end)
+        shares = sum(h["shares"] for h in holdings)
+        cost = sum(h["cost_basis"] for h in holdings)
+        val = sum(h["market_value"] for h in holdings if h["market_value"] is not None)
+        unreal = val - cost if cost else 0.0
+        real = sum(realized.values())
+        if shares != 0 or real != 0:
+            print(f"{str(month_end.date()):<12}{shares:>9,.4f}{cost:>13,.2f}{val:>13,.2f}"
+                  f"{unreal:>12,.2f}{real:>12,.2f}{unreal + real:>12,.2f}")
+        period = period + 1
+
+
 def main():
     ap = argparse.ArgumentParser(description="Portfolio holdings + PnL snapshot with split reconciliation")
     ap.add_argument("--input", required=True, help="Path to transactions CSV")
-    ap.add_argument("--date", required=True, help="Snapshot date, YYYY-MM-DD")
+    ap.add_argument("--date", required=True, help="Snapshot date, YYYY-MM-DD (or last month if --monthly)")
     ap.add_argument("--tolerance", type=float, default=0.15,
                     help="Match tolerance raw vs adjusted price (fraction)")
+    ap.add_argument("--monthly", action="store_true",
+                    help="Show month-end holdings + PnL since first purchase")
     args = ap.parse_args()
 
     df = load_transactions(args.input)
     rec = normalize(df, args.tolerance)
+
+    if args.monthly:
+        monthly_report(df, rec, args.tolerance, args.date)
+        return
+
     snap_date = pd.Timestamp(args.date)
     holdings, realized, over_sell = build_snapshot(rec, snap_date)
     flagged = rec[rec["flag_reason"] != ""]
