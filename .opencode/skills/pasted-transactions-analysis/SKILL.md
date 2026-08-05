@@ -136,6 +136,22 @@ Rules:
    up to that date; `Total P&L $` = Unrealized + Realized; `Avg Net Cost $` =
    (Cost − Realized) / Shares, blended across the whole portfolio.
 
+   ## Monthly comparison WITH stock breakdowns
+
+   Use `--monthly-breakdown` to print one full PER-TICKER table per month-end
+   (same columns as the default snapshot, plus a per-ticker `Realized $` and
+   `Total P&L $`, and a TOTAL row), from first trade to `--date`:
+
+   ```bash
+   .venv/bin/python scripts/portfolio_snapshot.py --input txs.csv \
+       --date 2026-08-04 --monthly-breakdown            # FIFO
+   .venv/bin/python scripts/portfolio_snapshot.py --input txs.csv \
+       --date 2026-08-04 --monthly-breakdown --method lifo
+   ```
+
+   This is the flag-ified version of the old "one table per month with
+   breakdowns" workflow (run the default snapshot per month-end).
+
 ## Implementation notes (script behavior)
 
 - `scripts/portfolio_snapshot.py` reconciles raw pre-split vs adjusted records
@@ -147,5 +163,7 @@ Rules:
   (split-adjusted) queried via DuckDB.
 - `--monthly` prints a month-end holdings + PnL table since first purchase
   (same method as `--method`).
+- `--monthly-breakdown` prints one PER-TICKER holdings + PnL table per month-end
+  since first purchase.
 - `--series` prints a portfolio-TOTAL-only table, one row per snapshot date
   (`--schedule mdom --day-of-month N` or `--schedule month-end`).

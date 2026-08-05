@@ -273,6 +273,42 @@ def monthly_report(df, rec, tolerance, max_date, method="fifo"):
         period = period + 1
 
 
+def monthly_breakdown(rec, max_date, method="fifo"):
+    """Per-ticker holdings + PnL table for EVERY month-end, from first trade to max_date."""
+    first = rec["date"].min().to_period("M")
+    last = pd.Timestamp(max_date).to_period("M")
+    period = first
+    while period <= last:
+        month_end = period.to_timestamp("M")
+        holdings, realized, _ = build_snapshot(rec, month_end, method)
+        if not holdings and not any(realized.values()):
+            period = period + 1
+            continue
+        print(f"\n{'=' * 96}")
+        print(f"Month: {month_end.strftime('%Y-%m-%d')}  [{method.upper()}]")
+        print("=" * 96)
+        print(f"{'Ticker':<9}{'Shares':>11}{'Cost $':>13}{'Market Value':>13}"
+              f"{'Unrealized $':>13}{'Realized $':>12}{'Total P&L $':>13}")
+        print("-" * 96)
+        tot_cost = tot_val = tot_unreal = 0.0
+        for h in holdings:
+            val = h["market_value"] if h["market_value"] is not None else 0.0
+            unreal = h["unrealized"] if h["unrealized"] is not None else 0.0
+            real = realized.get(h["ticker"], 0.0)
+            if h["unrealized"] is not None:
+                tot_cost += h["cost_basis"]
+                tot_val += val
+            tot_unreal += unreal
+            total = unreal + real
+            print(f"{h['ticker']:<9}{h['shares']:>11,.4f}{h['cost_basis']:>13,.2f}"
+                  f"{val:>13,.2f}{unreal:>13,.2f}{real:>12,.2f}{total:>13,.2f}")
+        real_total = sum(realized.values())
+        print("-" * 96)
+        print(f"{'TOTAL':<9}{'':>11}{tot_cost:>13,.2f}{tot_val:>13,.2f}"
+              f"{tot_unreal:>13,.2f}{real_total:>12,.2f}{tot_unreal + real_total:>13,.2f}")
+        period = period + 1
+
+
 def trade_calendar():
     """Sorted set of US-trading dates (as datetime.date) from the S&P 500 index parquet."""
     p = f"{BASE_DIR}/data/stocks/ohlcv_daily/data/symbol=*GSPC/*.parquet"
@@ -397,6 +433,9 @@ def main():
                     help="Match tolerance raw vs adjusted price (fraction)")
     ap.add_argument("--monthly", action="store_true",
                     help="Show month-end holdings + PnL since first purchase")
+    ap.add_argument("--monthly-breakdown", action="store_true",
+                    help="Show one PER-TICKER holdings + PnL table for every month-end "
+                         "since first purchase (no --series)")
     ap.add_argument("--series", action="store_true",
                     help="Show portfolio TOTALS only, one row per snapshot date (no per-ticker breakdown)")
     ap.add_argument("--schedule", choices=["month-end", "mdom"], default="month-end",
@@ -415,6 +454,10 @@ def main():
         dates = series_dates(rec, args.date, args.schedule, args.day_of_month)
         rows = portfolio_series(rec, dates, args.method)
         print_series(rows, args.schedule, args.day_of_month, args.method)
+        return
+
+    if args.monthly_breakdown:
+        monthly_breakdown(rec, args.date, args.method)
         return
 
     if args.monthly:
