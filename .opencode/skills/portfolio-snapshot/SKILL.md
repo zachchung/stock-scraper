@@ -1,5 +1,5 @@
 ---
-name: pasted-transactions-analysis
+name: portfolio-snapshot
 description: >
   Use when the user pastes a block of transaction data (GOOGL/stock buys+sells)
   in the tab-separated 14-column pair format and asks "how much am I holding
@@ -13,7 +13,7 @@ description: >
   questions or financial advice outside this specific analysis.
 ---
 
-# Pasted Transactions Analysis
+# Portfolio Snapshot
 
 Analyzes a pasted trade-history block for ONE OR MULTIPLE tickers (GOOGL,
 AMZN, MSFT, AAPL, etc.) and produces holdings + PnL as of today, shown as a
