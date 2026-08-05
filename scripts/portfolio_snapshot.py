@@ -341,8 +341,9 @@ def prev_trading_day(cal, day):
     return pd.Timestamp(day)
 
 
-def series_dates(rec, last, schedule="month-end", dom=None):
-    """Snapshot dates for the portfolio series from first trade to `last`.
+def series_dates(rec, last, schedule="month-end", dom=None, start=None):
+    """Snapshot dates for the portfolio series from `start` (first trade if None)
+    to `last`.
 
     schedule = 'month-end' : last trading day of each month.
     schedule = 'mdom'      : the `dom`-th calendar day of each month, snapped
@@ -350,8 +351,9 @@ def series_dates(rec, last, schedule="month-end", dom=None):
     """
     cal = trade_calendar()
     first = rec["date"].min()
+    seq_start = pd.Timestamp(start) if start else first
     dates = []
-    period = first.to_period("M")
+    period = seq_start.to_period("M")
     last_period = pd.Timestamp(last).to_period("M")
     while period <= last_period:
         if schedule == "month-end":

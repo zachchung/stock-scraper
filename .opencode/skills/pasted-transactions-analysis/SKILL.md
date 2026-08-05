@@ -3,10 +3,14 @@ name: pasted-transactions-analysis
 description: >
   Use when the user pastes a block of transaction data (GOOGL/stock buys+sells)
   in the tab-separated 14-column pair format and asks "how much am I holding
-  and what is the PnL", without prior explanation. The skill knows the exact
-  paste structure/rules, parses it to a CSV, and reports holdings + PnL as a
-  FIFO vs LIFO comparison table. DO NOT use for general stock questions or
-  financial advice outside this specific analysis.
+  and what is the PnL", without prior explanation. Also use for HOLDINGS + PnL
+  reporting over time from that data: monthly comparison, per-stock monthly
+  breakdown, or portfolio-totals-only series (e.g. "what's my PnL at the end of
+  every month", "show one table per month", "monthly totals only"). The skill
+  knows the exact paste structure/rules, parses it to a CSV, and reports
+  holdings + PnL as a FIFO vs LIFO comparison table (single date) or as a
+  month-over-month table via the snapshot CLI. DO NOT use for general stock
+  questions or financial advice outside this specific analysis.
 ---
 
 # Pasted Transactions Analysis
@@ -151,6 +155,22 @@ Rules:
 
    This is the flag-ified version of the old "one table per month with
    breakdowns" workflow (run the default snapshot per month-end).
+
+   ## Which command when? (prompt → flag)
+
+   | User asks | Run |
+   |---|---|
+   | "how much am I holding / what's my PnL" on one date | default (no flag) |
+   | "one table per month with breakdowns per stock" | `--monthly-breakdown` |
+   | "totals only, one row per date, monthly comparison" | `--series --schedule mdom --day-of-month N` or `--schedule month-end` |
+   | already-generated single-date totals (also jobs the seed `--monthly`) | `--monthly` |
+
+   Natural-language prompts map to:
+   - "…at the end of every month for the last N years, one table per month"
+     → `--monthly-breakdown`
+   - "…monthly comparison, totals only, on the 4th (or next trading day)"
+     → `--series --schedule mdom --day-of-month 4`
+   - "…totals only at the end of each month" → `--series --schedule month-end`
 
 ## Implementation notes (script behavior)
 
