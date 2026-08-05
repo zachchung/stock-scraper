@@ -63,17 +63,13 @@ Expose US stock OHLCV data via an MCP server to Claude Desktop, enabling queries
 - **Intraday** (`--intraday --interval 1h --years 2`): historical download for intraday bars.
 - **Incremental** (`--incremental`): detects the latest date/timestamp per symbol and fetches only rows after that date. Works with both `--daily` and `--intraday`.
 
-### Known issue — stale / partial daily bar on incremental load
+### Known issue & fix — stale daily bar on incremental load
 
-**Bug:** If `--daily` runs mid-session, the most recent day's bar is ingested from yfinance while it is still forming (partial OHLC), so only half a day of volume/range gets stored. The next incremental run keys off that same date and used to fetch only rows **after** it (`last_date + 1`), so the partial bar was never re-downloaded and remained stale forever. Example: AAPL `2026-08-04` was stored at ~25.6M volume vs ~68M in the final bar.
+Bug: If `--daily` runs mid-session, the most recent day's bar is ingested from yfinance while it is still forming (partial OHLC), so only half a day of volume/range gets stored. The next incremental run uses that same date and fetches only rows after it (`last_date + 1`), so the partial bar was never updated and remained stale forever. Example: AAPL `2026-08-04` was stored at ~25.6M volume vs ~68M in the final bar.
 
-**Fix** (see `src/stock_scraper/scraper.py`, `DAILY_REFRESH_DAYS`):
-1. **Back up the fetch window** — incremental daily now re-fetches from `last_date - DAILY_REFRESH_DAYS` (default 5 calendar days) up to *tomorrow* instead of `last_date + 1`, so the last stored bar is always re-downloaded.
-2. **Merge, don't just append** — the `ohlcv_daily` MERGE now uses `WHEN MATCHED THEN UPDATE SET *`, so re-fetched bars overwrite the stale partial row.
-
-Because the recent trailing bars are always included (via `period=max` for a full load, or the backed-up window for an incremental load) and are now merged with an update, **both load modes always refresh the latest ~5 daily bars** and self-correct any partial data.
-
-**Repair existing rows:** the next `--daily --incremental` (or `--daily`) run fixes already-corrupted bars automatically. No manual cleanup needed.
+Solution:
+1. Incremental fetch now re-fetches from `last_date - 5d` instead of `last_date + 1d`, so the last stored bar is always updated.
+2. The daily MERGE now uses `WHEN MATCHED THEN UPDATE SET *` — so any re-fetched recent bar overwrites the stale one. This alone fixes the full (non-incremental) load, since `period=max` already re-downloads/updates the trailing days.
 
 ### Step 2: Warehouse
 

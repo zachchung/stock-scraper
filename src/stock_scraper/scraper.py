@@ -35,7 +35,7 @@ VALID_PERIODS = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd"
 
 # Calendar days of trailing history to always re-fetch on incremental daily load.
 # The most recent bar may have been ingested mid-session (partial OHLC), so it must
-# be re-downloaded and merged (not just appended) to correct it on the next run.
+# be updated and merged (not just appended) to correct it on the next run.
 DAILY_REFRESH_DAYS = 5
 
 MACRO_TICKERS = [
