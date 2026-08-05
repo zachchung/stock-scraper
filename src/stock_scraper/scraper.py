@@ -519,7 +519,7 @@ def write_ohlcv_daily_to_iceberg(df):
     if "name" not in existing_cols:
         spark.sql(f"ALTER TABLE {OHLCV_TABLE_DAILY} ADD COLUMN name STRING")
 
-    new_rows = count_new_rows(OHLCV_TABLE_DAILY, ["symbol", "date"])
+    new_rows = count_new_rows(OHLCV_TABLE_DAILY, ["symbol", "date"]) or 0
     spark.sql(f"""
         MERGE INTO {OHLCV_TABLE_DAILY} t
         USING batch b
@@ -527,7 +527,9 @@ def write_ohlcv_daily_to_iceberg(df):
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
-    return new_rows
+    # batch is deduped on (symbol, date): rows that already existed get updated, the rest are inserted
+    updated_rows = max(int(sdf.count()) - new_rows, 0)
+    return new_rows, updated_rows
 
 def write_ohlcv_intraday_to_iceberg(df):
     spark = get_spark()
@@ -970,8 +972,8 @@ def main():
         mdf = fetch_macro_daily(period=args.period,
                                 start_date=macro_dates.get(MACRO_TICKER_SYMBOLS[0]) if macro_dates else None)
         if mdf is not None and not mdf.empty:
-            n = write_ohlcv_daily_to_iceberg(mdf) or 0
-            print(f"MACRO fetched {len(mdf)} rows, +{n} new", flush=True)
+            n_new, n_upd = write_ohlcv_daily_to_iceberg(mdf)
+            print(f"MACRO fetched {len(mdf)} rows, +{n_new} new, ~{n_upd} updated", flush=True)
         else:
             print("MACRO no data", flush=True)
 
@@ -991,9 +993,9 @@ def main():
                     df = fetch_ohlcv_daily(ticker, period=args.period)
                 n = 0
                 if df is not None and not df.empty:
-                    n = write_ohlcv_daily_to_iceberg(df) or 0
+                    n_new, n_upd = write_ohlcv_daily_to_iceberg(df)
                 label = "incr" if last_date is not None else "full"
-                print(f"[{i}/{total}] OHLCV {ticker} ({label}) +{n} rows", flush=True)
+                print(f"[{i}/{total}] OHLCV {ticker} ({label}) +{n_new} new, ~{n_upd} updated", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] OHLCV {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
