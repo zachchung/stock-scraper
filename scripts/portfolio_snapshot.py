@@ -273,20 +273,149 @@ def monthly_report(df, rec, tolerance, max_date, method="fifo"):
         period = period + 1
 
 
+def trade_calendar():
+    """Sorted set of US-trading dates (as datetime.date) from the S&P 500 index parquet."""
+    p = f"{BASE_DIR}/data/stocks/ohlcv_daily/data/symbol=*GSPC/*.parquet"
+    if not glob.glob(p):
+        return None
+    try:
+        rows = CON.execute("SELECT DISTINCT date FROM read_parquet(?)", [p]).fetchall()
+        return {pd.to_datetime(x[0]).date() for x in rows}
+    except Exception:
+        return None
+
+
+def next_trading_day(cal, day):
+    """First trading date at or after `day` (day is a date/time)."""
+    d = pd.Timestamp(day).date()
+    for _ in range(20):
+        if cal is None or d in cal:
+            return pd.Timestamp(d)
+        d += pd.Timedelta(days=1)
+    return pd.Timestamp(day)
+
+
+def prev_trading_day(cal, day):
+    """Last trading date at or before `day`."""
+    d = pd.Timestamp(day).date()
+    for _ in range(40):
+        if cal is None or d in cal:
+            return pd.Timestamp(d)
+        d -= pd.Timedelta(days=1)
+    return pd.Timestamp(day)
+
+
+def series_dates(rec, last, schedule="month-end", dom=None):
+    """Snapshot dates for the portfolio series from first trade to `last`.
+
+    schedule = 'month-end' : last trading day of each month.
+    schedule = 'mdom'      : the `dom`-th calendar day of each month, snapped
+                             forward to the next trading day if it's a holiday/weekend.
+    """
+    cal = trade_calendar()
+    first = rec["date"].min()
+    dates = []
+    period = first.to_period("M")
+    last_period = pd.Timestamp(last).to_period("M")
+    while period <= last_period:
+        if schedule == "month-end":
+            day = prev_trading_day(cal, period.to_timestamp("M"))
+            # Skip months with no trading data (resolved day fell outside the month)
+            if day is not None and day.to_period("M") != period:
+                period = period + 1
+                continue
+        else:
+            try:
+                day = pd.Timestamp(period.year, period.month, dom)
+            except ValueError:
+                day = None
+            day = None if day is None else next_trading_day(cal, day)
+        if day is not None and pd.Timestamp(first) <= day <= pd.Timestamp(last):
+            dates.append(day)
+        period = period + 1
+    return dates
+
+
+def portfolio_series(rec, dates, method="fifo"):
+    """Per-date portfolio TOTALS (no per-ticker breakdown). Each row aggregates
+    all holdings the way the snapshot TOTAL row does.
+
+    Returns list of dicts: date, shares, cost, value, unrealized, realized,
+    total_pnl, avg_net_cost. Total P&L = realized + unrealized; Avg Net Cost =
+    (Cost basis - Realized P&L) / Shares, blended across the whole portfolio.
+    """
+    rows = []
+    for d in dates:
+        holdings, realized, _ = build_snapshot(rec, d, method)
+        shares = sum(h["shares"] for h in holdings)
+        cost = sum(h["cost_basis"] for h in holdings)
+        val = sum(h["market_value"] for h in holdings if h["market_value"] is not None)
+        unreal = val - cost if cost else 0.0
+        real = sum(realized.values())
+        total = unreal + real
+        avg_net = (cost - real) / shares if shares else 0.0
+        rows.append({
+            "date": pd.Timestamp(d),
+            "shares": shares,
+            "cost": cost,
+            "value": val,
+            "unrealized": unreal,
+            "realized": real,
+            "total_pnl": total,
+            "avg_net_cost": avg_net,
+        })
+    return rows
+
+
+def _ordinal(n):
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{'st' if n % 10 == 1 else 'nd' if n % 10 == 2 else 'rd' if n % 10 == 3 else 'th'}"
+
+
+def print_series(rows, schedule, dom, method):
+    if schedule == "mdom":
+        label = f"monthly on the {_ordinal(dom)}, next trading day if holiday"
+    else:
+        label = "last trading day of each month"
+    print(f"\nPortfolio total series ({label}) [{method.upper()}]")
+    print("=" * 109)
+    print(f"{'Date':<12}{'Shares':>11}{'Cost $':>14}{'Market Value':>14}{'Unrealized $':>14}"
+          f"{'Realized $':>13}{'Total P&L $':>15}{'Avg Net Cost $':>15}")
+    print("-" * 109)
+    for r in rows:
+        print(f"{r['date'].date()!s:<12}{r['shares']:>11,.2f}{r['cost']:>14,.2f}"
+              f"{r['value']:>14,.2f}{r['unrealized']:>14,.2f}{r['realized']:>13,.2f}"
+              f"{r['total_pnl']:>15,.2f}{r['avg_net_cost']:>15,.2f}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Portfolio holdings + PnL snapshot with split reconciliation")
     ap.add_argument("--input", required=True, help="Path to transactions CSV")
-    ap.add_argument("--date", required=True, help="Snapshot date, YYYY-MM-DD (or last month if --monthly)")
+    ap.add_argument("--date", required=True, help="Snapshot date, YYYY-MM-DD (or last month if --monthly/--series)")
     ap.add_argument("--tolerance", type=float, default=0.15,
                     help="Match tolerance raw vs adjusted price (fraction)")
     ap.add_argument("--monthly", action="store_true",
                     help="Show month-end holdings + PnL since first purchase")
+    ap.add_argument("--series", action="store_true",
+                    help="Show portfolio TOTALS only, one row per snapshot date (no per-ticker breakdown)")
+    ap.add_argument("--schedule", choices=["month-end", "mdom"], default="month-end",
+                    help="Date rule for --series: 'month-end' (last trading day of month) "
+                         "or 'mdom' (the Nth calendar day, snapped to next trading day)")
+    ap.add_argument("--day-of-month", type=int, default=4,
+                    help="Day of month for --schedule mdom (default 4)")
     ap.add_argument("--method", choices=["fifo", "lifo"], default="fifo",
                     help="Lot-matching method for realized PnL (default: fifo)")
     args = ap.parse_args()
 
     df = load_transactions(args.input)
     rec = normalize(df, args.tolerance)
+
+    if args.series:
+        dates = series_dates(rec, args.date, args.schedule, args.day_of_month)
+        rows = portfolio_series(rec, dates, args.method)
+        print_series(rows, args.schedule, args.day_of_month, args.method)
+        return
 
     if args.monthly:
         monthly_report(df, rec, args.tolerance, args.date, args.method)

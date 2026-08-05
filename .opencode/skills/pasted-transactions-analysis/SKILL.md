@@ -103,6 +103,39 @@ Rules:
    reason and explain that their basis was estimated via the split-invariant
    dollar/adjusted-close fallback.
 
+   ## Portfolio-total series (no per-ticker breakdown)
+
+   Use `--series` to get a table with the SAME columns as the per-ticker table
+   (`Shares | Cost $ | Market Value | Unrealized $ | Realized $ | Total P&L $ |
+   Avg Net Cost $`), but one row per snapshot date, where each row is the TOTAL
+   across ALL tickers (i.e. the TOTAL row of the normal snapshot). This gives a
+   quick month-over-month view of the whole book without the per-stock detail.
+
+   Date rule is chosen with `--schedule`:
+   - `--schedule mdom --day-of-month N` (default N=4): the Nth calendar day of
+     each month, snapped FORWARD to the next trading day if it lands on a
+     holiday/weekend (e.g. Jul 4 → Jul 5, a Saturday → Monday). Column header
+     says "next trading day if holiday".
+   - `--schedule month-end` (default): the last trading day of each month.
+
+   Trading days are taken from the S&P 500 index parquet
+   (`data/stocks/ohlcv_daily/data/symbol=*GSPC/*.parquet`).
+
+   ```bash
+   # snapshot on the 4th of each month (or next trading day), FIFO
+   .venv/bin/python scripts/portfolio_snapshot.py --input txs.csv \
+       --date 2026-08-04 --series --schedule mdom --day-of-month 4
+   # last trading day of each month, LIFO
+   .venv/bin/python scripts/portfolio_snapshot.py --input txs.csv \
+       --date 2026-08-04 --series --schedule month-end --method lifo
+   ```
+
+   Per row: `Shares` = total shares held; `Cost $` = total remaining cost basis;
+   `Market Value` = total market value (sum of holdings with a price);
+   `Unrealized $` = Market Value − Cost; `Realized $` = cumulative realized P&L
+   up to that date; `Total P&L $` = Unrealized + Realized; `Avg Net Cost $` =
+   (Cost − Realized) / Shares, blended across the whole portfolio.
+
 ## Implementation notes (script behavior)
 
 - `scripts/portfolio_snapshot.py` reconciles raw pre-split vs adjusted records
@@ -114,3 +147,5 @@ Rules:
   (split-adjusted) queried via DuckDB.
 - `--monthly` prints a month-end holdings + PnL table since first purchase
   (same method as `--method`).
+- `--series` prints a portfolio-TOTAL-only table, one row per snapshot date
+  (`--schedule mdom --day-of-month N` or `--schedule month-end`).
