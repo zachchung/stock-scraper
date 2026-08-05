@@ -33,6 +33,11 @@ INTRADAY_INTERVALS = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d", "30m":
 DEFAULT_INTRADAY_INTERVAL = "1h"
 VALID_PERIODS = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
 
+# Calendar days of trailing history to always re-fetch on incremental daily load.
+# The most recent bar may have been ingested mid-session (partial OHLC), so it must
+# be re-downloaded and merged (not just appended) to correct it on the next run.
+DAILY_REFRESH_DAYS = 5
+
 MACRO_TICKERS = [
     ("^GSPC", "INDEX", "S&P 500"),
     ("^IXIC", "INDEX", "NASDAQ Composite"),
@@ -101,10 +106,11 @@ def get_sp500_tickers():
     return sorted(df["Symbol"].tolist())
 
 def fetch_ohlcv_daily(ticker, period="max", start_date=None):
-    # start_date is for incremental load
+    # start_date is for incremental load. Back up the window by DAILY_REFRESH_DAYS so the
+    # last stored bar (possibly a partial mid-session bar) is re-fetched and corrected via merge.
     if start_date:
-        start = (start_date + timedelta(days=1)).strftime("%Y-%m-%d")
-        end = datetime.today().strftime("%Y-%m-%d")
+        start = (start_date - timedelta(days=DAILY_REFRESH_DAYS)).strftime("%Y-%m-%d")
+        end = (datetime.today() + timedelta(days=1)).strftime("%Y-%m-%d")
         hist = yf.download(ticker, start=start, end=end, auto_adjust=False, progress=False)
     else:
         hist = yf.download(ticker, period=period, auto_adjust=False, progress=False)
@@ -518,6 +524,7 @@ def write_ohlcv_daily_to_iceberg(df):
         MERGE INTO {OHLCV_TABLE_DAILY} t
         USING batch b
         ON t.symbol = b.symbol AND t.date = b.date
+        WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
     return new_rows
