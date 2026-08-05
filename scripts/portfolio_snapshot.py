@@ -445,6 +445,8 @@ def main():
                          "or 'mdom' (the Nth calendar day, snapped to next trading day)")
     ap.add_argument("--day-of-month", type=int, default=4,
                     help="Day of month for --schedule mdom (default 4)")
+    ap.add_argument("--start", type=str, default=None,
+                    help="First snapshot date to include (default: first trade)")
     ap.add_argument("--method", choices=["fifo", "lifo"], default="fifo",
                     help="Lot-matching method for realized PnL (default: fifo)")
     args = ap.parse_args()
@@ -453,7 +455,7 @@ def main():
     rec = normalize(df, args.tolerance)
 
     if args.series:
-        dates = series_dates(rec, args.date, args.schedule, args.day_of_month)
+        dates = series_dates(rec, args.date, args.schedule, args.day_of_month, args.start)
         rows = portfolio_series(rec, dates, args.method)
         print_series(rows, args.schedule, args.day_of_month, args.method)
         return
