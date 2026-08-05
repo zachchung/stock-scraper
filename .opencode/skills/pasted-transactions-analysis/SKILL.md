@@ -76,7 +76,7 @@ Rules:
    column** (Total P&L = realized + unrealized, per symbol) and an **Avg Net
    Cost $ column**, plus a TOTAL row:
 
-   | Ticker | Shares | Cost $ | Value $ | Unrealized $ | Realized $ | Total P&L $ | Avg Net Cost $ |
+   | Ticker | Shares | Cost $ | Market Value | Unrealized $ | Realized $ | Total P&L $ | Avg Net Cost $ |
    |---|---|---|---|---|---|---|---|
    | GOOGL | 45 | 15,631.68 | 16,025.85 | +394.17 | +8,656.92 | +9,051.09 | 154.99 |
    | AMZN | 44 | 9,304.82 | 11,949.52 | +2,644.70 | +2,664.88 | +5,309.58 | 150.91 |

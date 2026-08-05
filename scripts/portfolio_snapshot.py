@@ -255,7 +255,7 @@ def monthly_report(df, rec, tolerance, max_date, method="fifo"):
     last = pd.Timestamp(max_date).to_period("M")
     print(f"\nMonthly snapshots ({first} -> {last}) [{method.upper()}]")
     print("=" * 88)
-    print(f"{'Month End':<12}{'Shares':>9}{'Cost $':>13}{'Value $':>13}"
+    print(f"{'Month End':<12}{'Shares':>9}{'Cost $':>13}{'Market Value':>13}"
           f"{'Unreal. $':>12}{'Realized $':>12}{'Net P&L $':>12}")
     print("-" * 88)
     period = first
@@ -298,7 +298,7 @@ def main():
 
     print(f"\nSnapshot date: {snap_date.date()}")
     print("=" * 78)
-    print(f"{'Ticker':<8}{'Shares':>12}{'Cost $':>14}{'Value $':>14}{'Unrealized $':>14}{'P&L %':>9}")
+    print(f"{'Ticker':<8}{'Shares':>12}{'Cost $':>14}{'Market Value':>14}{'Unrealized $':>14}{'P&L %':>9}")
     print("-" * 78)
     tot_cost = tot_val = 0.0
     for h in holdings:
