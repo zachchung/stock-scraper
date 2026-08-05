@@ -5,3 +5,4 @@ __pycache__/
 .idea/
 stocks.duckdb
 .portfolio_splits.json
+output/
