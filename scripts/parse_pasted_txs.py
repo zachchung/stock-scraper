@@ -6,10 +6,21 @@ def parse_date(s):
     s = s.strip()
     if not s:
         return ""
+    # Already normalized YYYY-MM-DD
+    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+    # Slash-separated YY-M/D -> YYYY-MM-DD
     m = re.match(r"(\d{2})-(\d{1,2})/(\d{1,2})", s)
     if m:
-        yy, mm, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return f"{2000+yy}-{mm:02d}-{dd:02d}"
+        yy, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{2000+yy}-{mo:02d}-{d:02d}"
+    # Dash-separated DD-MM-YY -> YYYY-MM-DD
+    m = re.match(r"(\d{1,2})-(\d{1,2})-(\d{2})", s)
+    if m:
+        d, mo, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{2000+yy}-{mo:02d}-{d:02d}"
     return s
 
 def clean(s):
