@@ -52,6 +52,9 @@ CON = duckdb.connect()
 # double/triple-count rows. iceberg_scan reads only the current snapshot.
 CORP_ACTIONS_TABLE = f"{BASE_DIR}/data/stocks/corporate_actions"
 
+# Withholding tax on dividends, applied to the "incl div" P&L figures.
+DIV_TAX_RATE = 0.30
+
 
 def load_transactions(path):
     df = pd.read_csv(path)
@@ -500,6 +503,9 @@ def main():
     ap.add_argument("--date", required=True, help="Snapshot date, YYYY-MM-DD (or last month if --monthly/--series)")
     ap.add_argument("--tolerance", type=float, default=0.15,
                     help="Match tolerance raw vs adjusted price (fraction)")
+    ap.add_argument("--div-tax-rate", type=float, default=DIV_TAX_RATE,
+                    help=f"Withholding tax rate applied to dividends for the "
+                         f"'incl div' figures (default {DIV_TAX_RATE:.0%})")
     ap.add_argument("--monthly", action="store_true",
                     help="Show month-end holdings + PnL since first purchase")
     ap.add_argument("--monthly-breakdown", action="store_true",
@@ -569,11 +575,13 @@ def main():
         print(f"  {'TOTAL':<8}{sum(cap_gains.values()):+,.2f}")
 
     if dividends:
-        print("\nDIVIDENDS RECEIVED (up to snapshot date):")
+        tax = args.div_tax_rate
+        print(f"\nDIVIDENDS RECEIVED (pre-tax / post-tax @ {tax:.0%}, up to snapshot date):")
         print("-" * 78)
         for tkr, val in sorted(dividends.items()):
-            print(f"  {tkr:<8}{val:+,.2f}")
-        print(f"  {'TOTAL':<8}{sum(dividends.values()):+,.2f}")
+            print(f"  {tkr:<8}{val:>10,.2f}  /  {val * (1 - tax):>10,.2f}")
+        div_total = sum(dividends.values())
+        print(f"  {'TOTAL':<8}{div_total:>10,.2f}  /  {div_total * (1 - tax):>10,.2f}")
 
     if over_sell:
         print("\nWARNING: not enough shares to cover some sells (over-sold):")
@@ -593,9 +601,11 @@ def main():
 
     total_pnl = (tot_val - tot_cost) + sum(realized.values()) if holdings else sum(realized.values())
     div_total = sum(dividends.values())
+    tax = args.div_tax_rate
     print("=" * 78)
-    print(f"NET P&L (pre-dividend, unrealized + realized): {total_pnl - div_total:+,.2f}")
-    print(f"NET P&L (post-dividend, incl. dividends):       {total_pnl:+,.2f}")
+    print(f"NET P&L (pre-dividend, unrealized + realized):     {total_pnl - div_total:+,.2f}")
+    print(f"NET P&L (post-dividend, pre-tax dividends):        {total_pnl:+,.2f}")
+    print(f"NET P&L (post-dividend, after {tax:.0%} div tax): {total_pnl - tax * div_total:+,.2f}")
 
 
 if __name__ == "__main__":

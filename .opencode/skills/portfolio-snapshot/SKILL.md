@@ -64,29 +64,33 @@ Rules:
    | Cost basis | $15,631.68 | $10,462.66 |
    | Market value | $16,025.85 | $16,025.85 |
    | Total P&L (excl div) | +9,051.09 | +9,051.09 |
-   | Total P&L (incl div) | +9,224.95 | +9,224.95 |
+   | Dividend (pre-tax) | +173.86 | +173.86 |
+   | Dividend (post-tax) | +121.70 | +121.70 |
+   | Total P&L (incl div) | +9,172.79 | +9,172.79 |
    | Avg Net Cost $ | 154.99 | 154.99 |
 
    **ALWAYS show Total P&L in dollar amount.** `Total P&L (excl div)` = unrealized
-   + realized capital gains, **excluding** dividend income. `Total P&L (incl div)`
-   = same + dividends received (per ticker from the script's `DIVIDENDS RECEIVED`
-   section). Both are IDENTICAL for FIFO and LIFO — matching method only shifts
-   P&L between realized and unrealized, and dividends are method-invariant. Use
-   that invariance as a sanity check. Pull Shares / Cost / Market Value /
-   Realized (cap gains) / Dividends from each run's output; the script's `NET P&L
-   (pre-dividend)` = Total P&L excl div and `NET P&L (post-dividend)` = Total P&L
-   incl div. `Avg Net Cost $` = (Cost basis − Realized P&L) / Shares held and is
-   also method-invariant.
+   + realized capital gains, **excluding** dividend income. `Dividend (pre-tax)`
+   = gross dividends received (per ticker from the script's `DIVIDENDS RECEIVED`
+   section). `Dividend (post-tax)` = pre-tax × (1 − 0.30) — the 30% dividend
+   withholding tax. `Total P&L (incl div)` = `Total P&L (excl div)` + `Dividend
+   (post-tax)`. All P&L rows are IDENTICAL for FIFO and LIFO — matching method
+   only shifts P&L between realized and unrealized, and dividends are
+   method-invariant. Use that invariance as a sanity check. Pull Shares / Cost /
+   Market Value / Realized (cap gains) / Dividends from each run's output; the
+   script's `NET P&L (pre-dividend)` = Total P&L excl div and `NET P&L
+   (post-dividend, after 30% div tax)` = Total P&L incl div. `Avg Net Cost $` =
+   (Cost basis − Realized P&L) / Shares held and is also method-invariant.
 
-   For **multi-symbol** pastes, show a per-symbol table with **Total P&L
-   (excl div)** and **Total P&L (incl div)** columns, plus an **Avg Net Cost $
-   column**, and a TOTAL row:
+   For **multi-symbol** pastes, show a per-symbol table with **Total P&L (excl
+   div)**, **Dividend (pre-tax)**, **Dividend (post-tax)**, and **Total P&L (incl
+   div)** columns, plus an **Avg Net Cost $ column**, and a TOTAL row:
 
-   | Ticker | Shares | Cost $ | Market Value | Total P&L (excl div) | Total P&L (incl div) | Avg Net Cost $ |
-   |---|---|---|---|---|---|---|---|
-   | GOOGL | 45 | 15,631.68 | 16,025.85 | +9,051.09 | +9,224.95 | 154.99 |
-   | AMZN | 44 | 9,304.82 | 11,949.52 | +5,309.58 | +5,430.21 | 150.91 |
-   | TOTAL | | 61,121.96 | 71,470.19 | +32,233.04 | +33,012.77 | |
+   | Ticker | Shares | Cost $ | Market Value | Total P&L (excl div) | Dividend (pre-tax) | Dividend (post-tax) | Total P&L (incl div) | Avg Net Cost $ |
+   |---|---|---|---|---|---|---|---|---|
+   | GOOGL | 45 | 15,631.68 | 16,025.85 | +9,051.09 | +173.86 | +121.70 | +9,172.79 | 154.99 |
+   | AMZN | 44 | 9,304.82 | 11,949.52 | +5,309.58 | +120.63 | +84.44 | +5,394.02 | 150.91 |
+   | TOTAL | | 61,121.96 | 71,470.19 | +32,233.04 | +294.49 | +206.14 | +32,439.18 | |
 
    **ALWAYS include the Avg Net Cost $ column in the output table.**
 
@@ -105,9 +109,13 @@ Rules:
    - Can be negative (e.g. NVDA −$5.80) when cumulative sale proceeds exceed
      cumulative purchase dollars while shares are still held.
 
-   `Total P&L (incl div) − Total P&L (excl div)` = total dividends received on
-   that symbol. Pull per-symbol dividends from the script's `DIVIDENDS RECEIVED`
-   section (they are already scaled to current post-split share counts).
+   `Dividend (post-tax)` = `Dividend (pre-tax)` × (1 − 0.30). `Total P&L (incl
+   div) − Total P&L (excl div)` = post-tax dividends received on that symbol.
+   Pull per-symbol dividends (pre-tax) from the script's `DIVIDENDS RECEIVED`
+   section (they are already scaled to current post-split share counts) and
+   apply the 30% tax yourself; or read the post-tax total from the script's
+   `NET P&L (post-dividend, after 30% div tax)` line. The tax rate is
+   configurable via `--div-tax-rate` on the script.
 
    Then the FIFO-vs-LIFO summary across the whole portfolio (with Total P&L
    excl/incl div as the last columns). If any rows are FLAGGED in the output,
@@ -117,11 +125,11 @@ Rules:
    ## Portfolio-total series (no per-ticker breakdown)
 
    Use `--series` to get a table with the SAME columns as the per-ticker table
-   (`Shares | Cost $ | Market Value | Total P&L (excl div) | Total P&L (incl
-   div) | Avg Net Cost $`), but one row per snapshot date, where each row is the
-   TOTAL across ALL tickers (i.e. the TOTAL row of the normal snapshot). This
-   gives a quick month-over-month view of the whole book without the per-stock
-   detail.
+   (`Shares | Cost $ | Market Value | Total P&L (excl div) | Dividend (pre-tax)
+   | Dividend (post-tax) | Total P&L (incl div) | Avg Net Cost $`), but one row
+   per snapshot date, where each row is the TOTAL across ALL tickers (i.e. the
+   TOTAL row of the normal snapshot). This gives a quick month-over-month view
+   of the whole book without the per-stock detail.
 
    Date rule is chosen with `--schedule`:
    - `--schedule mdom --day-of-month N` (default N=4): the Nth calendar day of
@@ -145,9 +153,10 @@ Rules:
    Per row: `Shares` = total shares held; `Cost $` = total remaining cost basis;
    `Market Value` = total market value (sum of holdings with a price);
    `Total P&L (excl div)` = Unrealized + Realized capital gains (no dividends);
-   `Total P&L (incl div)` = same + dividends received up to that date;
-   `Avg Net Cost $` = (Cost − Realized) / Shares, blended across the whole
-   portfolio.
+   `Dividend (pre-tax)` = gross dividends received up to that date;
+   `Dividend (post-tax)` = pre-tax × (1 − 0.30); `Total P&L (incl div)` = excl
+   div + Dividend (post-tax); `Avg Net Cost $` = (Cost − Realized) / Shares,
+   blended across the whole portfolio.
 
    ## Monthly comparison WITH stock breakdowns
 
@@ -193,9 +202,11 @@ Rules:
   DuckDB `iceberg_scan` (active snapshot only — raw parquet globs would
   double-count across stale Iceberg snapshots).
 - Dividend income is folded into realized PnL; the script prints capital gains
-  (`REALIZED P&L`) and `DIVIDENDS RECEIVED` separately, and `NET P&L
-  (pre-dividend)` / `NET P&L (post-dividend)`. Those map directly to the
-  `Total P&L (excl div)` / `Total P&L (incl div)` columns.
+  (`REALIZED P&L`) and `DIVIDENDS RECEIVED (pre-tax / post-tax @ 30%)`
+  separately, and three NET lines: `NET P&L (pre-dividend)`, `NET P&L
+  (post-dividend, pre-tax dividends)`, `NET P&L (post-dividend, after 30% div
+  tax)`. The after-tax line maps directly to the `Total P&L (incl div)` column;
+  the tax rate is configurable via `--div-tax-rate` (default 0.30).
 - Local prices come from `data/stocks/ohlcv_daily/data/symbol=GOOGL/*.parquet`
   (split-adjusted) queried via DuckDB.
 - `--monthly` prints a month-end holdings + PnL table since first purchase
