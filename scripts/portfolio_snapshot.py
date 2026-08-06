@@ -55,6 +55,19 @@ CORP_ACTIONS_TABLE = f"{BASE_DIR}/data/stocks/corporate_actions"
 # Withholding tax on dividends, applied to the "incl div" P&L figures.
 DIV_TAX_RATE = 0.30
 
+# Ticker alias map: some exports use a legacy symbol for a company whose ticker
+# has since changed. Every alias is normalized to its canonical symbol BEFORE any
+# processing so the position, prices and corporate actions merge across the
+# rename (a ticker change is NOT a split -- shares carry over 1:1, no rescale).
+#
+# SQ -> XYZ: Block, Inc. traded as SQ until it adopted the XYZ ticker in
+# January 2024, so any pre-2024 SQ position is an XYZ position. SQ is also
+# delisted on yfinance (no timezone; the fallback fetch hangs), so keeping it
+# under the legacy symbol breaks both pricing and corporate-action lookups.
+TICKER_ALIASES = {
+    "SQ": "XYZ",
+}
+
 
 def load_transactions(path):
     df = pd.read_csv(path)
@@ -65,6 +78,7 @@ def load_transactions(path):
     df.columns = [c.lower() for c in df.columns]
     df["date"] = pd.to_datetime(df["date"])
     df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
+    df["ticker"] = df["ticker"].replace(TICKER_ALIASES)
     df["side"] = df["side"].astype(str).str.upper().str.strip()
     df["shares"] = df["shares"].astype(float)
     df["price"] = df["price"].astype(float)
