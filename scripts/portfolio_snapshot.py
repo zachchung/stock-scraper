@@ -574,13 +574,13 @@ def print_series(rows, schedule, dom, method):
     else:
         label = "last trading day of each month"
     print(f"\nPortfolio total series ({label}) [{method.upper()}]")
-    print("=" * 112)
-    print(f"{'Date':<12}{'Market Value':>14}{'Total P&L $':>15}"
+    print("=" * 97)
+    print(f"{'Date':<12}{'Market Value':>14}"
           f"{'P&L excl div':>15}{'Div pre-tax':>14}{'Div post-tax':>14}"
           f"{'P&L incl div':>15}")
-    print("-" * 112)
+    print("-" * 97)
     for r in rows:
-        print(f"{r['date'].date()!s:<12}{r['value']:>14,.2f}{r['total_pnl']:>15,.2f}"
+        print(f"{r['date'].date()!s:<12}{r['value']:>14,.2f}"
               f"{r['total_pnl_excl_div']:>15,.2f}{r['dividend_pre']:>14,.2f}"
               f"{r['dividend_post']:>14,.2f}{r['total_pnl_incl_div']:>15,.2f}")
 
