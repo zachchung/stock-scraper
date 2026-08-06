@@ -306,10 +306,11 @@ def build_snapshot(reconciled, date, method="fifo"):
     holdings.sort(key=lambda h: h["ticker"])
 
     # Dividend income: cash received on each ex-date = shares held at that date
-    # (current post-split terms) x per-share amount, with the amount scaled by
-    # the cumulative post-split factor so historical per-share dividends align
-    # with today's normalized share counts. Folding into `realized` makes it flow
-    # through every report; `dividends` is returned separately for transparency.
+    # (current post-split terms) x per-share amount. The amount from
+    # corporate_actions/yfinance is ALREADY split-adjusted (per current share),
+    # so post-split shares x amount = actual dollars received — no split scaling.
+    # Folding into `realized` makes it flow through every report; `dividends`
+    # is returned separately for transparency.
     dividends = {}
     div_scope = set(open_pos) | set(realized)
     for tkr in div_scope:
@@ -327,8 +328,7 @@ def build_snapshot(reconciled, date, method="fifo"):
                 shares += tx[1]["canon_shares"] if tx[1]["side"] == "BUY" else -tx[1]["canon_shares"]
                 tx = next(tx_it, None)
             if shares > 1e-9:
-                F = cum_factor(tkr, d["date"])
-                income += shares * d["amount"] / F
+                income += shares * d["amount"]
         if income:
             dividends[tkr] = income
             realized[tkr] = realized.get(tkr, 0.0) + income
@@ -504,6 +504,61 @@ def portfolio_series(rec, dates, method="fifo", div_tax_rate=DIV_TAX_RATE):
     return rows
 
 
+def dividend_breakdown(rec, date, div_tax_rate=DIV_TAX_RATE):
+    """Per-ex-date dividends earned while holding, one row per symbol/date.
+
+    Shares held = post-split (canonical) share count at that ex-date; the
+    per-share amount is split-adjusted, so shares x amount = actual dollars.
+    Returns list of dicts: date, ticker, shares, div_per_share, div (pre-tax),
+    div_after_tax (after div_tax_rate withholding).
+    """
+    txs = rec[rec["date"] <= pd.Timestamp(date)].sort_values("date")
+    cutoff = pd.Timestamp(date)
+    rows = []
+    for tkr in sorted(txs["ticker"].unique()):
+        divs = get_dividends(tkr)
+        if len(divs) == 0:
+            continue
+        txs_tkr = txs[txs["ticker"] == tkr].sort_values("date")
+        tx_it = txs_tkr.iterrows()
+        tx = next(tx_it, None)
+        shares = 0.0
+        for _, d in divs.iterrows():
+            if d["date"].date() > cutoff.date():
+                continue
+            while tx is not None and tx[1]["date"] < d["date"]:
+                shares += tx[1]["canon_shares"] if tx[1]["side"] == "BUY" else -tx[1]["canon_shares"]
+                tx = next(tx_it, None)
+            if shares > 1e-9:
+                dps = d["amount"]
+                div = shares * dps
+                rows.append({
+                    "date": d["date"],
+                    "ticker": tkr,
+                    "shares": shares,
+                    "div_per_share": dps,
+                    "div": div,
+                    "div_after_tax": div * (1 - div_tax_rate),
+                })
+    return sorted(rows, key=lambda r: (r["date"], r["ticker"]))
+
+
+def print_dividend_breakdown(rows, div_tax_rate):
+    print(f"\nDIVIDENDS EARNED (pre-tax / post-tax @ {div_tax_rate:.0%}, up to snapshot date)")
+    print("=" * 74)
+    print(f"{'Date':<12}{'Ticker':<8}{'Shares':>10}{'Div/share':>10}{'Div $':>10}{'Div after tax':>14}")
+    print("-" * 74)
+    tot_sh = tot_div = tot_after = 0.0
+    for r in rows:
+        print(f"{str(r['date'].date()):<12}{r['ticker']:<8}{r['shares']:>10,.4f}"
+              f"{r['div_per_share']:>10,.4f}{r['div']:>10,.2f}{r['div_after_tax']:>14,.2f}")
+        tot_sh += r["shares"]
+        tot_div += r["div"]
+        tot_after += r["div_after_tax"]
+    print("-" * 74)
+    print(f"{'TOTAL':<12}{'':<8}{tot_sh:>10,.4f}{'':>10}{tot_div:>10,.2f}{tot_after:>14,.2f}")
+
+
 def _ordinal(n):
     if 10 <= n % 100 <= 20:
         return f"{n}th"
@@ -552,10 +607,17 @@ def main():
                     help="First snapshot date to include (default: first trade)")
     ap.add_argument("--method", choices=["fifo", "lifo"], default="fifo",
                     help="Lot-matching method for realized PnL (default: fifo)")
+    ap.add_argument("--dividends", action="store_true",
+                    help="Show per-symbol/per-date dividend breakdown (shares, div/share, "
+                         "pre-tax div, after-tax div) while holding, up to --date")
     args = ap.parse_args()
 
     df = load_transactions(args.input)
     rec = normalize(df, args.tolerance)
+
+    if args.dividends:
+        print_dividend_breakdown(dividend_breakdown(rec, args.date, args.div_tax_rate), args.div_tax_rate)
+        return
 
     if args.series:
         dates = series_dates(rec, args.date, args.schedule, args.day_of_month, args.start)

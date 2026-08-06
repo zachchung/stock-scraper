@@ -6,3 +6,5 @@ __pycache__/
 stocks.duckdb
 .portfolio_splits.json
 output/
+
+.DS_Store
