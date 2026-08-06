@@ -174,21 +174,80 @@ def local_price_at(ticker, date):
         return None
 
 
+@functools.lru_cache(maxsize=None)
+def split_factors_after(ticker, date):
+    """Sorted set of all subset-product "levels" M such that recorded price ~=
+    adjusted * M, where M is the product of an arbitrary subset of the split
+    ratios occurring strictly after `date`.
+
+    A transaction may be recorded at any point on the split timeline: fully raw
+    (M = F = product of ALL post-trade splits), fully adjusted (M = 1), or an
+    intermediate level where only some splits have been applied (e.g. post-4:1
+    but pre-10:1 => M = 4). canon_shares = recorded_shares * F / M gives the
+    clean whole share count for the matched level."""
+    s = get_splits(ticker)
+    if len(s) == 0:
+        return (1.0,)
+    factors = tuple(float(r["factor"]) for _, r in s.iterrows()
+                    if r["date"].date() > date.date())
+    if not factors:
+        return (1.0,)
+    levels = {1.0}
+    for f in factors:
+        levels = levels | {v * f for v in levels}
+    return tuple(sorted(levels, reverse=True))
+
+
+def local_ohlc_at(ticker, date):
+    """Split-adjusted (high, low, close) for the session nearest <= date, or None."""
+    p = f"{BASE_DIR}/data/stocks/ohlcv_daily/data/symbol={ticker}/*.parquet"
+    if not glob.glob(p):
+        return None
+    try:
+        row = CON.execute(
+            "SELECT high, low, close FROM read_parquet(?) WHERE date <= ? ORDER BY date DESC LIMIT 1",
+            [p, date.strftime("%Y-%m-%d")],
+        ).fetchone()
+        return None if row is None else row  # (high, low, close)
+    except Exception:
+        return None
+
+
+def _in_range(price, lo, hi, tol):
+    """True if price falls within the daily [lo, hi] range, or within `tol`
+    (fraction of the nearest range bound) outside it, to allow genuine
+    pre-/post-market fills below/above the regular-session range. Prices far
+    from the session (e.g. data errors) must NOT match."""
+    if lo is None or hi is None or hi <= 0:
+        return False
+    if lo <= price <= hi:
+        return True
+    if price < lo:
+        return (lo - price) / lo <= tol
+    return (price - hi) / hi <= tol
+
+
 def normalize(df, tolerance):
     """Normalize every transaction to CURRENT post-split share count.
 
     Cost basis (shares * price) is invariant under splits, so we never trust
     the recorded share count alone. Instead we reconcile against the local
-    split-adjusted close on the transaction date:
+    split-adjusted HIGH/LOW/CLOSE on the trade date:
 
-      * If recorded price matches the adjusted level -> shares are already current.
-      * If recorded price matches the raw (pre-split) level -> shares *= F.
-      * If the recorded price level can't be classified but the LOCAL adjusted
-        price exists, we ESTIMATE current shares as dollar / adjusted_close,
-        which is split-invariant regardless of the recording basis.
-      * If no local price, fall back to shares * F.
+      - If recorded price falls within (or just outside, pre-/post-market) the
+        raw (pre-split) daily range -> shares *= F.
+      - If it falls within the adjusted daily range -> shares are already current.
+      - Otherwise the row can't be classified cleanly: we do NOT fabricate a
+        share count from the price ratio. We keep the split-scaled recorded
+        shares (the neutral fallback, same as the no-local-price case) and flag
+        the row loudly so it is surfaced for manual verification.
+      - If no local price, fall back to shares * F.
 
-    Rows that can't be classified are flagged for manual review.
+    Using the daily range (not just the close) lets valid fill prices that land
+    between low/high or a few percent outside the session (pre/post-market) be
+    reconciled cleanly. Rows that still can't be classified are kept with the
+    split-scaled shares and FLAGGED for manual review -- main() prints a banner
+    and exits non-zero so the user is notified instead of trusting a guess.
     Returns a dict of DataFrames: the reconciled transactions."""
     out = df.copy()
     out["canon_shares"] = 0.0
@@ -199,35 +258,51 @@ def normalize(df, tolerance):
         row = out.loc[i]
         ticker, d = row["ticker"], row["date"]
         F = cum_factor(ticker, d)
-        adj = local_price_at(ticker, d)
+        ohlc = local_ohlc_at(ticker, d)
         cost = row["shares"] * row["price"]
 
-        if adj is None:
+        if ohlc is None:
             out.at[i, "canon_shares"] = row["shares"] * F
             out.at[i, "flag_reason"] = "no local price; scaled by split factor" if F > 1.0001 else ""
             out.at[i, "basis"] = "fallback*F"
             out.at[i, "cost_basis"] = cost
             continue
 
-        err_adj = abs(row["price"] - adj) / adj
-        err_raw = abs(row["price"] - adj * F) / (adj * F) if F > 1 else None
+        hi, lo, adj = ohlc  # split-adjusted high / low / close
+        p = row["price"]
+        # Levels M = product of an arbitrary subset of the post-trade splits:
+        # M=1 -> already fully adjusted, M=F -> fully raw, in-between -> some
+        # splits already applied (e.g. M=4 for post-4:1/pre-10:1). For the
+        # matched level, canon = recorded_shares * M, which is a clean whole
+        # count when M is an integer subset product (no fuzzy /adjclose).
+        matched_level = None
+        for M in split_factors_after(ticker, d):
+            if _in_range(p, lo * M, hi * M, tolerance):
+                matched_level = M
+                break
 
-        if err_raw is not None and err_raw < tolerance:
-            out.at[i, "canon_shares"] = row["shares"] * F
-            out.at[i, "basis"] = "raw"
-        elif err_adj < tolerance:
-            out.at[i, "canon_shares"] = row["shares"]
-            out.at[i, "basis"] = "adjusted"
-        else:
-            # Cannot match either basis cleanly. Estimate split-invariantly:
-            # dollar / adjusted_close = current post-split shares.
+        if matched_level is None:
+            # No split level matches (e.g. bad recorded price/date). Use the
+            # split-invariant dollar/adjclose estimate as a last resort: cost
+            # basis is invariant across splits, so current shares = dollars /
+            # adjusted close is correct at ANY recording basis. Flag loudly.
             out.at[i, "canon_shares"] = cost / adj
             out.at[i, "basis"] = "est(dollar/adjclose)"
             out.at[i, "flag_reason"] = (
-                f"price {row['price']:.2f} not near adj {adj:.2f} or raw {adj*F:.2f}; "
-                f"used dollar/adjclose"
+                f"price {p:.2f} outside all split levels "
+                f"[{min(lo*M for M in split_factors_after(ticker,d)):.2f}, "
+                f"{max(hi*M for M in split_factors_after(ticker,d)):.2f}] "
+                f"(tol={tolerance:.0%}); estimated dollar/adjclose -- VERIFY manually"
             )
-        out.at[i, "cost_basis"] = cost  # invariant
+        else:
+            out.at[i, "canon_shares"] = row["shares"] * matched_level
+            if matched_level == 1:
+                out.at[i, "basis"] = "adjusted"
+            elif abs(matched_level - F) < 1e-9:
+                out.at[i, "basis"] = "raw"
+            else:
+                out.at[i, "basis"] = f"level {matched_level:g}"
+        out.at[i, "cost_basis"] = cost
     return out
 
 
@@ -640,6 +715,14 @@ def main():
     holdings, realized, over_sell, dividends = build_snapshot(rec, snap_date, args.method)
     flagged = rec[rec["flag_reason"] != ""]
 
+    if len(flagged):
+        print("\n" + "!" * 78)
+        print(f"!  {len(flagged)} TRANSACTION(S) COULD NOT BE RECONCILED")
+        print(f"!  They were kept with split-scaled share counts (NOT estimated).")
+        print(f"!  Holdings/PnL below are UNVERIFIED for these rows -- see the")
+        print(f"!  FLAGGED section at the bottom and fix before trusting numbers.")
+        print("!" * 78 + "\n")
+
     print(f"\nSnapshot date: {snap_date.date()}")
     print("=" * 78)
     print(f"{'Ticker':<8}{'Shares':>12}{'Cost $':>14}{'Market Value':>14}{'Unrealized $':>14}{'P&L %':>9}")
@@ -693,6 +776,11 @@ def main():
         for _, r in flagged.iterrows():
             print(f"  {r['date'].date()} {r['ticker']:<6}{r['side']:<5}"
                   f"{r['shares']:>10.4f} @ {r['price']:,.2f}  -> {r['flag_reason']}")
+        print("\n" + "!" * 78)
+        print(f"!  {len(flagged)} unresolved transaction(s). Holdings/PnL are NOT")
+        print(f"!  reliable until these are fixed. Exiting non-zero.")
+        print("!" * 78)
+        sys.exit(2)
 
     total_pnl = (tot_val - tot_cost) + sum(realized.values()) if holdings else sum(realized.values())
     div_total = sum(dividends.values())
