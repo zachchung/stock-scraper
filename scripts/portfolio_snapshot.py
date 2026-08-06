@@ -447,23 +447,31 @@ def series_dates(rec, last, schedule="month-end", dom=None, start=None):
     return dates
 
 
-def portfolio_series(rec, dates, method="fifo"):
+def portfolio_series(rec, dates, method="fifo", div_tax_rate=DIV_TAX_RATE):
     """Per-date portfolio TOTALS (no per-ticker breakdown). Each row aggregates
     all holdings the way the snapshot TOTAL row does.
 
     Returns list of dicts: date, shares, cost, value, unrealized, realized,
-    total_pnl, avg_net_cost. Total P&L = realized + unrealized; Avg Net Cost =
-    (Cost basis - Realized P&L) / Shares, blended across the whole portfolio.
+    total_pnl, avg_net_cost, dividends (pre-tax), total_pnl_excl_div,
+    total_pnl_incl_div. `total_pnl` = realized + unrealized (realized already
+    includes pre-tax dividends, as in build_snapshot); Total P&L (excl div) =
+    total_pnl − pre-tax dividends; Total P&L (incl div) = total_pnl −
+    div_tax_rate × pre-tax dividends. Avg Net Cost = (Cost − Realized) /
+    Shares, blended across the whole portfolio.
     """
     rows = []
     for d in dates:
-        holdings, realized, _, _ = build_snapshot(rec, d, method)
+        holdings, realized, _, dividends = build_snapshot(rec, d, method)
         shares = sum(h["shares"] for h in holdings)
         cost = sum(h["cost_basis"] for h in holdings)
         val = sum(h["market_value"] for h in holdings if h["market_value"] is not None)
         unreal = val - cost if cost else 0.0
         real = sum(realized.values())
         total = unreal + real
+        div_pre = sum(dividends.values())
+        div_post = div_pre * (1 - div_tax_rate)
+        total_excl = total - div_pre
+        total_incl = total - div_tax_rate * div_pre
         avg_net = (cost - real) / shares if shares else 0.0
         rows.append({
             "date": pd.Timestamp(d),
@@ -474,6 +482,10 @@ def portfolio_series(rec, dates, method="fifo"):
             "realized": real,
             "total_pnl": total,
             "avg_net_cost": avg_net,
+            "dividend_pre": div_pre,
+            "dividend_post": div_post,
+            "total_pnl_excl_div": total_excl,
+            "total_pnl_incl_div": total_incl,
         })
     return rows
 
@@ -490,11 +502,15 @@ def print_series(rows, schedule, dom, method):
     else:
         label = "last trading day of each month"
     print(f"\nPortfolio total series ({label}) [{method.upper()}]")
-    print("=" * 44)
-    print(f"{'Date':<12}{'Market Value':>14}{'Total P&L $':>15}")
-    print("-" * 44)
+    print("=" * 112)
+    print(f"{'Date':<12}{'Market Value':>14}{'Total P&L $':>15}"
+          f"{'P&L excl div':>15}{'Div pre-tax':>14}{'Div post-tax':>14}"
+          f"{'P&L incl div':>15}")
+    print("-" * 112)
     for r in rows:
-        print(f"{r['date'].date()!s:<12}{r['value']:>14,.2f}{r['total_pnl']:>15,.2f}")
+        print(f"{r['date'].date()!s:<12}{r['value']:>14,.2f}{r['total_pnl']:>15,.2f}"
+              f"{r['total_pnl_excl_div']:>15,.2f}{r['dividend_pre']:>14,.2f}"
+              f"{r['dividend_post']:>14,.2f}{r['total_pnl_incl_div']:>15,.2f}")
 
 
 def main():
@@ -529,7 +545,7 @@ def main():
 
     if args.series:
         dates = series_dates(rec, args.date, args.schedule, args.day_of_month, args.start)
-        rows = portfolio_series(rec, dates, args.method)
+        rows = portfolio_series(rec, dates, args.method, args.div_tax_rate)
         print_series(rows, args.schedule, args.day_of_month, args.method)
         return
 
