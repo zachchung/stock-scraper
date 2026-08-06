@@ -61,30 +61,32 @@ Rules:
    | | FIFO | LIFO |
    |---|---|---|
    | Shares held | 45 | 45 |
-   | Cost basis | $15,631.68 | $10,434.46 |
+   | Cost basis | $15,631.68 | $10,462.66 |
    | Market value | $16,025.85 | $16,025.85 |
-   | Unrealized P&L | +$394.17 (+2.5%) | +$5,591.39 (+53.6%) |
-   | Realized P&L | +$8,656.92 | +$3,459.70 |
-   | Total P&L ($) | +$9,051.09 | +$9,051.09 |
+   | Total P&L (excl div) | +9,051.09 | +9,051.09 |
+   | Total P&L (incl div) | +9,224.95 | +9,224.95 |
    | Avg Net Cost $ | 154.99 | 154.99 |
 
-   **ALWAYS show Total P&L in dollar amount** as the last row (Total P&L =
-   realized + unrealized). Total P&L must be identical for FIFO and LIFO
-   (matching method only shifts P&L between realized and unrealized) — use it
-   as a sanity check. Pull shares/cost/value/unrealized/realized from each run's
-   output (Total P&L = NET P&L line at the bottom of the script output).
-   Avg Net Cost $ = (Cost basis − Realized P&L) / Shares held and is also
-   method-invariant (same for FIFO and LIFO).
+   **ALWAYS show Total P&L in dollar amount.** `Total P&L (excl div)` = unrealized
+   + realized capital gains, **excluding** dividend income. `Total P&L (incl div)`
+   = same + dividends received (per ticker from the script's `DIVIDENDS RECEIVED`
+   section). Both are IDENTICAL for FIFO and LIFO — matching method only shifts
+   P&L between realized and unrealized, and dividends are method-invariant. Use
+   that invariance as a sanity check. Pull Shares / Cost / Market Value /
+   Realized (cap gains) / Dividends from each run's output; the script's `NET P&L
+   (pre-dividend)` = Total P&L excl div and `NET P&L (post-dividend)` = Total P&L
+   incl div. `Avg Net Cost $` = (Cost basis − Realized P&L) / Shares held and is
+   also method-invariant.
 
-   For **multi-symbol** pastes, show a per-symbol table with a **Total P&L $
-   column** (Total P&L = realized + unrealized, per symbol) and an **Avg Net
-   Cost $ column**, plus a TOTAL row:
+   For **multi-symbol** pastes, show a per-symbol table with **Total P&L
+   (excl div)** and **Total P&L (incl div)** columns, plus an **Avg Net Cost $
+   column**, and a TOTAL row:
 
-   | Ticker | Shares | Cost $ | Market Value | Unrealized $ | Realized $ | Total P&L $ | Avg Net Cost $ |
+   | Ticker | Shares | Cost $ | Market Value | Total P&L (excl div) | Total P&L (incl div) | Avg Net Cost $ |
    |---|---|---|---|---|---|---|---|
-   | GOOGL | 45 | 15,631.68 | 16,025.85 | +394.17 | +8,656.92 | +9,051.09 | 154.99 |
-   | AMZN | 44 | 9,304.82 | 11,949.52 | +2,644.70 | +2,664.88 | +5,309.58 | 150.91 |
-   | TOTAL | | 61,121.96 | 71,470.19 | +10,348.23 | +21,884.81 | +32,233.04 | |
+   | GOOGL | 45 | 15,631.68 | 16,025.85 | +9,051.09 | +9,224.95 | 154.99 |
+   | AMZN | 44 | 9,304.82 | 11,949.52 | +5,309.58 | +5,430.21 | 150.91 |
+   | TOTAL | | 61,121.96 | 71,470.19 | +32,233.04 | +33,012.77 | |
 
    **ALWAYS include the Avg Net Cost $ column in the output table.**
 
@@ -94,7 +96,8 @@ Rules:
                = (Total invested − Total proceeds) / Shares held
    ```
    - `Cost basis` = remaining cost of shares still held (the `Cost $` column).
-   - `Realized P&L` = proceeds minus cost of sold shares.
+   - `Realized P&L` = proceeds minus cost of sold shares (cap gains only — do
+     NOT include dividends).
    - Because `Cost basis − Realized P&L = Total invested − Total proceeds`,
      this equals the net cash deployed into the position per share still held,
      and it is IDENTICAL for FIFO and LIFO (matching method only shifts P&L
@@ -102,18 +105,23 @@ Rules:
    - Can be negative (e.g. NVDA −$5.80) when cumulative sale proceeds exceed
      cumulative purchase dollars while shares are still held.
 
-   Then the FIFO-vs-LIFO summary across the whole portfolio (with Total P&L $
-   as the last row). If any rows are FLAGGED in the output, list them with the
-   reason and explain that their basis was estimated via the split-invariant
-   dollar/adjusted-close fallback.
+   `Total P&L (incl div) − Total P&L (excl div)` = total dividends received on
+   that symbol. Pull per-symbol dividends from the script's `DIVIDENDS RECEIVED`
+   section (they are already scaled to current post-split share counts).
+
+   Then the FIFO-vs-LIFO summary across the whole portfolio (with Total P&L
+   excl/incl div as the last columns). If any rows are FLAGGED in the output,
+   list them with the reason and explain that their basis was estimated via the
+   split-invariant dollar/adjusted-close fallback.
 
    ## Portfolio-total series (no per-ticker breakdown)
 
    Use `--series` to get a table with the SAME columns as the per-ticker table
-   (`Shares | Cost $ | Market Value | Unrealized $ | Realized $ | Total P&L $ |
-   Avg Net Cost $`), but one row per snapshot date, where each row is the TOTAL
-   across ALL tickers (i.e. the TOTAL row of the normal snapshot). This gives a
-   quick month-over-month view of the whole book without the per-stock detail.
+   (`Shares | Cost $ | Market Value | Total P&L (excl div) | Total P&L (incl
+   div) | Avg Net Cost $`), but one row per snapshot date, where each row is the
+   TOTAL across ALL tickers (i.e. the TOTAL row of the normal snapshot). This
+   gives a quick month-over-month view of the whole book without the per-stock
+   detail.
 
    Date rule is chosen with `--schedule`:
    - `--schedule mdom --day-of-month N` (default N=4): the Nth calendar day of
@@ -136,15 +144,17 @@ Rules:
 
    Per row: `Shares` = total shares held; `Cost $` = total remaining cost basis;
    `Market Value` = total market value (sum of holdings with a price);
-   `Unrealized $` = Market Value − Cost; `Realized $` = cumulative realized P&L
-   up to that date; `Total P&L $` = Unrealized + Realized; `Avg Net Cost $` =
-   (Cost − Realized) / Shares, blended across the whole portfolio.
+   `Total P&L (excl div)` = Unrealized + Realized capital gains (no dividends);
+   `Total P&L (incl div)` = same + dividends received up to that date;
+   `Avg Net Cost $` = (Cost − Realized) / Shares, blended across the whole
+   portfolio.
 
    ## Monthly comparison WITH stock breakdowns
 
    Use `--monthly-breakdown` to print one full PER-TICKER table per month-end
-   (same columns as the default snapshot, plus a per-ticker `Realized $` and
-   `Total P&L $`, and a TOTAL row), from first trade to `--date`:
+   (same columns as the default snapshot, plus a per-ticker `Total P&L (excl
+   div)` and `Total P&L (incl div)`, and a TOTAL row), from first trade to
+   `--date`:
 
    ```bash
    .venv/bin/python scripts/portfolio_snapshot.py --input txs.csv \
@@ -175,10 +185,17 @@ Rules:
 ## Implementation notes (script behavior)
 
 - `scripts/portfolio_snapshot.py` reconciles raw pre-split vs adjusted records
-  against an authoritative yfinance split table (cached in
-  `.portfolio_splits.json`, gitignored), applies split scaling (GOOGL 20:1 on
-  2022-07-18), matches sells FIFO or LIFO per `--method`, and prices holdings
-  at the last local close on/before the snapshot date.
+  against the local `corporate_actions` table (splits + dividends, populated by
+  `scraper.py --corporate-actions`; falls back to a live yfinance fetch if a
+  ticker isn't ingested), applies split scaling (GOOGL 20:1 on 2022-07-18),
+  matches sells FIFO or LIFO per `--method`, and prices holdings at the last
+  local close on/before the snapshot date. Splits/dividends are read via
+  DuckDB `iceberg_scan` (active snapshot only — raw parquet globs would
+  double-count across stale Iceberg snapshots).
+- Dividend income is folded into realized PnL; the script prints capital gains
+  (`REALIZED P&L`) and `DIVIDENDS RECEIVED` separately, and `NET P&L
+  (pre-dividend)` / `NET P&L (post-dividend)`. Those map directly to the
+  `Total P&L (excl div)` / `Total P&L (incl div)` columns.
 - Local prices come from `data/stocks/ohlcv_daily/data/symbol=GOOGL/*.parquet`
   (split-adjusted) queried via DuckDB.
 - `--monthly` prints a month-end holdings + PnL table since first purchase
