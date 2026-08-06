@@ -46,8 +46,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CON = duckdb.connect()
 
 # Local corporate-actions warehouse (splits + dividends), populated by
-# `scraper.py --corporate-actions`. Read via DuckDB so no network is needed.
-CORP_ACTIONS_PATH = f"{BASE_DIR}/data/stocks/corporate_actions/data/symbol=*/*.parquet"
+# `scraper.py --corporate-actions`. Read via DuckDB iceberg_scan (ACTIVE snapshot
+# only), NOT raw parquet globs: every MERGE/upsert rewrites rows into new data
+# files while old files linger until snapshots are expired, so raw globs
+# double/triple-count rows. iceberg_scan reads only the current snapshot.
+CORP_ACTIONS_TABLE = f"{BASE_DIR}/data/stocks/corporate_actions"
 
 
 def load_transactions(path):
@@ -77,9 +80,9 @@ def get_splits(ticker):
     """
     try:
         df = CON.execute(
-            "SELECT date, split_factor AS factor FROM read_parquet(?) "
+            "SELECT date, split_factor AS factor FROM iceberg_scan(?) "
             "WHERE action_type = 'split' AND symbol = ? ORDER BY date",
-            [CORP_ACTIONS_PATH, ticker],
+            [CORP_ACTIONS_TABLE, ticker],
         ).fetchdf()
         if len(df):
             return df
@@ -105,9 +108,9 @@ def get_dividends(ticker):
     """
     try:
         df = CON.execute(
-            "SELECT date, amount FROM read_parquet(?) "
+            "SELECT date, amount FROM iceberg_scan(?) "
             "WHERE action_type = 'dividend' AND symbol = ? ORDER BY date",
-            [CORP_ACTIONS_PATH, ticker],
+            [CORP_ACTIONS_TABLE, ticker],
         ).fetchdf()
         if len(df):
             return df
@@ -589,8 +592,10 @@ def main():
                   f"{r['shares']:>10.4f} @ {r['price']:,.2f}  -> {r['flag_reason']}")
 
     total_pnl = (tot_val - tot_cost) + sum(realized.values()) if holdings else sum(realized.values())
+    div_total = sum(dividends.values())
     print("=" * 78)
-    print(f"NET P&L (unrealized + realized + dividends): {total_pnl:+,.2f}")
+    print(f"NET P&L (pre-dividend, unrealized + realized): {total_pnl - div_total:+,.2f}")
+    print(f"NET P&L (post-dividend, incl. dividends):       {total_pnl:+,.2f}")
 
 
 if __name__ == "__main__":
