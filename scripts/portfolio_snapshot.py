@@ -34,6 +34,7 @@ Usage:
 """
 
 import argparse
+import functools
 import glob
 import os
 import sys
@@ -85,9 +86,10 @@ def load_transactions(path):
     bad = ~df["side"].isin({"BUY", "SELL"})
     if bad.any():
         sys.exit(f"Invalid side values: {df.loc[bad, 'side'].unique().tolist()}")
-    return df.sort_values("date").reset_index(drop=True)
+    return df.sort_values("date", kind="stable").reset_index(drop=True)
 
 
+@functools.lru_cache(maxsize=None)
 def get_splits(ticker):
     """DataFrame [date, factor]; factor = new shares per 1 old share.
 
@@ -116,6 +118,7 @@ def get_splits(ticker):
     return df
 
 
+@functools.lru_cache(maxsize=None)
 def get_dividends(ticker):
     """DataFrame [date, amount]; per-share dividend on each ex-date.
 
