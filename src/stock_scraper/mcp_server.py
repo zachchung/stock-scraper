@@ -25,7 +25,8 @@ mcp = FastMCP(
         "- balance_sheets: symbol, fiscal_date, total_assets, total_liabilities, total_equity, total_debt, cash_and_equivalents, etc.\n"
         "- yield_curve: date, y10/y3m/y5/y30 Treasury yields + 10y-3m and 10y-5y spreads\n"
         "- analyst_targets: current consensus price targets per symbol (high/low/mean/median)\n"
-        "- analyst_upgrades_downgrades: historical individual analyst actions with price targets"
+        "- analyst_upgrades_downgrades: historical individual analyst actions with price targets\n"
+        "- corporate_actions: symbol, date, action_type (split|dividend), split_factor (new shares per 1 old), amount (per-share dividend)"
     ),
 )
 
@@ -83,6 +84,9 @@ def get_conn():
     fundamentals_path = str(DATA_DIR / "stocks/fundamentals_snapshot")
     if (DATA_DIR / "stocks/fundamentals_snapshot/metadata").exists():
         con.execute(f"CREATE VIEW fundamentals_snapshot AS SELECT * FROM iceberg_scan('{fundamentals_path}')")
+    corporate_actions_path = str(DATA_DIR / "stocks/corporate_actions")
+    if (DATA_DIR / "stocks/corporate_actions/metadata").exists():
+        con.execute(f"CREATE VIEW corporate_actions AS SELECT * FROM iceberg_scan('{corporate_actions_path}')")
 
     return con
 
@@ -94,7 +98,8 @@ def fmt(result) -> str:
 @mcp.tool()
 def query(sql: str) -> str:
     """Run arbitrary SQL against the data warehouse. Available views:
-    ohlcv, earnings_dates, income_statements, cashflow_statements, balance_sheets."""
+    ohlcv, earnings_dates, income_statements, cashflow_statements, balance_sheets,
+    analyst_targets, analyst_upgrades_downgrades, corporate_actions."""
     con = get_conn()
     try:
         return fmt(con.sql(sql))
