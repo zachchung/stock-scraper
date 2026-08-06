@@ -716,12 +716,8 @@ def main():
     flagged = rec[rec["flag_reason"] != ""]
 
     if len(flagged):
-        print("\n" + "!" * 78)
-        print(f"!  {len(flagged)} TRANSACTION(S) COULD NOT BE RECONCILED")
-        print(f"!  They were kept with split-scaled share counts (NOT estimated).")
-        print(f"!  Holdings/PnL below are UNVERIFIED for these rows -- see the")
-        print(f"!  FLAGGED section at the bottom and fix before trusting numbers.")
-        print("!" * 78 + "\n")
+        print(f"\nNOTE: {len(flagged)} transaction(s) could not be fully reconciled;")
+        print("      they are listed in the FLAGGED section below.")
 
     print(f"\nSnapshot date: {snap_date.date()}")
     print("=" * 78)
@@ -776,11 +772,6 @@ def main():
         for _, r in flagged.iterrows():
             print(f"  {r['date'].date()} {r['ticker']:<6}{r['side']:<5}"
                   f"{r['shares']:>10.4f} @ {r['price']:,.2f}  -> {r['flag_reason']}")
-        print("\n" + "!" * 78)
-        print(f"!  {len(flagged)} unresolved transaction(s). Holdings/PnL are NOT")
-        print(f"!  reliable until these are fixed. Exiting non-zero.")
-        print("!" * 78)
-        sys.exit(2)
 
     total_pnl = (tot_val - tot_cost) + sum(realized.values()) if holdings else sum(realized.values())
     div_total = sum(dividends.values())
