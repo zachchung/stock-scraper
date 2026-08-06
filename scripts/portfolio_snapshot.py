@@ -3,7 +3,8 @@
 Portfolio snapshot: holdings + PnL on any date, with automatic split reconciliation.
 
 Data sources
-  - Splits .......... yfinance .splits (authoritative ratios + effective dates)
+  - Splits .......... local corporate_actions table (populated by scraper.py
+                      --corporate-actions; authoritative ratios + effective dates)
   - Prices .......... local stock_scraper OHLCV (already split-adjusted), yfinance fallback
   - Transactions .... your CSV file (see format below)
 
@@ -29,7 +30,6 @@ Usage:
 
 import argparse
 import glob
-import json
 import os
 import sys
 
@@ -39,7 +39,10 @@ import yfinance as yf
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CON = duckdb.connect()
-SPLIT_CACHE = os.path.join(BASE_DIR, ".portfolio_splits.json")
+
+# Local corporate-actions warehouse (splits + dividends), populated by
+# `scraper.py --corporate-actions`. Read via DuckDB so no network is needed.
+CORP_ACTIONS_PATH = f"{BASE_DIR}/data/stocks/corporate_actions/data/symbol=*/*.parquet"
 
 
 def load_transactions(path):
@@ -61,29 +64,20 @@ def load_transactions(path):
 
 
 def get_splits(ticker):
-    """DataFrame [date, factor]; factor = new shares per 1 old share. Cached on disk."""
-    cache = {}
-    if os.path.exists(SPLIT_CACHE):
-        with open(SPLIT_CACHE) as fh:
-            cache = json.load(fh)
-    if ticker in cache:
-        df = pd.DataFrame(cache[ticker])
-        if len(df):
-            df["date"] = pd.to_datetime(df["date"])
-        return df
+    """DataFrame [date, factor]; factor = new shares per 1 old share.
 
-    raw = yf.Ticker(ticker).splits  # Series: DatetimeIndex -> ratio
-    recs = []
-    if raw is not None and len(raw):
-        for idx, ratio in raw.items():
-            recs.append({"date": str(idx.date()), "factor": float(ratio)})
-    cache[ticker] = recs
-    with open(SPLIT_CACHE, "w") as fh:
-        json.dump(cache, fh, indent=2)
-    df = pd.DataFrame(recs)
-    if len(df):
-        df["date"] = pd.to_datetime(df["date"])
-    return df
+    Reads split history from the LOCAL corporate_actions warehouse (populated
+    by `scraper.py --corporate-actions`) via DuckDB, so no network is needed.
+    Returns an empty frame if there is no local split data for the ticker.
+    """
+    try:
+        return CON.execute(
+            "SELECT date, split_factor AS factor FROM read_parquet(?) "
+            "WHERE action_type = 'split' AND symbol = ? ORDER BY date",
+            [CORP_ACTIONS_PATH, ticker],
+        ).fetchdf()
+    except Exception:
+        return pd.DataFrame(columns=["date", "factor"])
 
 
 def cum_factor(ticker, date):

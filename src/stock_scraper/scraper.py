@@ -28,6 +28,7 @@ ANALYST_TARGETS_TABLE = "local.stocks.analyst_targets"
 ANALYST_UPGRADES_TABLE = "local.stocks.analyst_upgrades_downgrades"
 EPS_ESTIMATES_TABLE = "local.stocks.eps_estimates"
 FUNDAMENTALS_TABLE = "local.stocks.fundamentals_snapshot"
+CORPORATE_ACTIONS_TABLE = "local.stocks.corporate_actions"
 
 INTRADAY_INTERVALS = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d", "30m": "60d", "60m": "730d", "1h": "730d"}
 DEFAULT_INTRADAY_INTERVAL = "1h"
@@ -480,6 +481,78 @@ def fetch_fundamentals_snapshot(ticker):
         if info.get("nextFiscalYearEnd") else None
     )
     return row
+
+def fetch_corporate_actions(ticker):
+    """Fetch stock splits and dividends into a single long table.
+
+    - splits ..... yfinance .splits  (DatetimeIndex -> ratio: new shares per 1 old)
+    - dividends .. yfinance .dividends (DatetimeIndex -> per-share amount)
+    """
+    stock = yf.Ticker(ticker)
+    recs = []
+    try:
+        splits = stock.splits
+        if splits is not None and len(splits):
+            for idx, ratio in splits.items():
+                recs.append({
+                    "symbol": ticker,
+                    "date": idx.date(),
+                    "action_type": "split",
+                    "split_factor": float(ratio),
+                    "amount": None,
+                })
+    except Exception:
+        pass
+    try:
+        divs = stock.dividends
+        if divs is not None and len(divs):
+            for idx, amount in divs.items():
+                recs.append({
+                    "symbol": ticker,
+                    "date": idx.date(),
+                    "action_type": "dividend",
+                    "split_factor": None,
+                    "amount": float(amount),
+                })
+    except Exception:
+        pass
+    if not recs:
+        return None
+    df = pd.DataFrame(recs)
+    # Coerce to numeric so all-None columns (e.g. no splits) type as double,
+    # not as object, which breaks Spark type inference.
+    df["split_factor"] = pd.to_numeric(df["split_factor"], errors="coerce")
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    return df
+
+def write_corporate_actions_to_iceberg(df):
+    spark = get_spark()
+    sdf = (
+        spark.createDataFrame(df)
+        .withColumn("date", to_date(col("date")))
+        .dropDuplicates(["symbol", "action_type", "date"])
+    )
+    sdf.createOrReplaceTempView("batch")
+    spark.sql(f"""
+        CREATE TABLE IF NOT EXISTS {CORPORATE_ACTIONS_TABLE} (
+            symbol STRING,
+            date DATE,
+            action_type STRING,
+            split_factor DOUBLE,
+            amount DOUBLE
+        )
+        USING iceberg
+        PARTITIONED BY (symbol)
+    """)
+    new_rows = count_new_rows(CORPORATE_ACTIONS_TABLE, ["symbol", "action_type", "date"])
+    spark.sql(f"""
+        MERGE INTO {CORPORATE_ACTIONS_TABLE} t
+        USING batch b
+        ON t.symbol = b.symbol AND t.action_type = b.action_type AND t.date = b.date
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+    return new_rows
 
 def write_ohlcv_daily_to_iceberg(df):
     spark = get_spark()
@@ -938,6 +1011,8 @@ def main():
     parser.add_argument("--analyst", action="store_true", help="Fetch analyst price targets AND upgrades/downgrades (both)")
     parser.add_argument("--cashflow", action="store_true", help="Fetch quarterly cash flow statements")
     parser.add_argument("--balancesheet", action="store_true", help="Fetch quarterly balance sheets")
+    parser.add_argument("--corporate-actions", action="store_true",
+                        help="Fetch stock splits and dividends into corporate_actions")
     parser.add_argument("--tickers", nargs="+", help="Specific tickers to scrape (default: S&P 500 + VOO)")
     args = parser.parse_args()
 
@@ -956,8 +1031,9 @@ def main():
     do_analyst = args.analyst
     do_cashflow = args.cashflow
     do_balance_sheet = args.balancesheet
+    do_corporate_actions = args.corporate_actions
 
-    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_macro and not do_fundamentals and not do_targets and not do_analyst and not do_cashflow and not do_balance_sheet:
+    if not do_ohlcv_daily and not do_ohlcv_intraday and not do_earnings and not do_macro and not do_fundamentals and not do_targets and not do_analyst and not do_cashflow and not do_balance_sheet and not do_corporate_actions:
         parser.print_help()
         sys.exit(1)
 
@@ -1068,6 +1144,19 @@ def main():
                     print(f"[{i}/{total}] BALANCE_SHEET {ticker} +0 rows", flush=True)
             except Exception as e:
                 print(f"[{i}/{total}] BALANCE_SHEET {ticker} FAILED: {e}", file=sys.stderr, flush=True)
+
+    if do_corporate_actions:
+        total = len(tickers)
+        for i, ticker in enumerate(tickers, 1):
+            try:
+                caf = fetch_corporate_actions(ticker)
+                if caf is not None and not caf.empty:
+                    n = write_corporate_actions_to_iceberg(caf) or 0
+                    print(f"[{i}/{total}] CORP_ACTION {ticker} +{n} rows", flush=True)
+                else:
+                    print(f"[{i}/{total}] CORP_ACTION {ticker} +0 rows", flush=True)
+            except Exception as e:
+                print(f"[{i}/{total}] CORP_ACTION {ticker} FAILED: {e}", file=sys.stderr, flush=True)
 
     if do_fundamentals:
         total = len(tickers)

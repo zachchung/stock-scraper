@@ -469,6 +469,38 @@ spark.sql(f\"CALL local.system.expire_snapshots('stocks.ohlcv_daily', older_than
 - "What's AAPL's market cap, 52-week high/low, and profit margin?"
 - "How has the forward EPS estimate for NVDA changed over the last month?" (eps_estimates history)
 
+## Corporate Actions Extension (Splits & Dividends)
+
+### Motivation
+
+Portfolio PnL needs split history (to reconcile share counts across split bases) and dividend history (for realized income). Both were previously fetched from yfinance at query time; now they're ingested once into a local warehouse table.
+
+### New Table
+
+**Table: `local.stocks.corporate_actions`** (Iceberg, constant `CORPORATE_ACTIONS_TABLE`)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `symbol` | `STRING` | Ticker |
+| `date` | `DATE` | Split effective date / dividend ex-date |
+| `action_type` | `STRING` | `split` or `dividend` |
+| `split_factor` | `DOUBLE` | New shares per 1 old share (splits only; `NULL` for dividends) |
+| `amount` | `DOUBLE` | Per-share dividend (dividends only; `NULL` for splits) |
+
+**Uniqueness:** `(symbol, action_type, date)` — a split and a dividend can share a date without colliding.
+
+### Ingestion
+
+```bash
+# All S&P 500 + VOO
+python src/stock_scraper/scraper.py --corporate-actions
+
+# Specific symbols
+python src/stock_scraper/scraper.py --corporate-actions --tickers AAPL GOOGL META
+```
+
+The MERGE upserts on `(symbol, action_type, date)`, so re-runs are idempotent. `scripts/portfolio_snapshot.py` now reads splits from this table via DuckDB (no network needed at report time), filtering `action_type = 'split'`.
+
 ## Planned: Intraday / Hourly OHLCV Data
 
 ### Motivation
