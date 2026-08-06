@@ -5,8 +5,13 @@ Portfolio snapshot: holdings + PnL on any date, with automatic split reconciliat
 Data sources
   - Splits .......... local corporate_actions table (populated by scraper.py
                       --corporate-actions; authoritative ratios + effective dates)
+  - Dividends ....... local corporate_actions table (per-share on ex-date),
+                      folded into realized P&L as income
   - Prices .......... local stock_scraper OHLCV (already split-adjusted), yfinance fallback
   - Transactions .... your CSV file (see format below)
+
+Both splits and dividends fall back to a live yfinance fetch when the local
+table has no rows for a ticker (e.g. not yet ingested).
 
 Split reconciliation
   Every transaction is normalized to a single canonical basis: CURRENT post-split
@@ -67,17 +72,56 @@ def get_splits(ticker):
     """DataFrame [date, factor]; factor = new shares per 1 old share.
 
     Reads split history from the LOCAL corporate_actions warehouse (populated
-    by `scraper.py --corporate-actions`) via DuckDB, so no network is needed.
-    Returns an empty frame if there is no local split data for the ticker.
+    by `scraper.py --corporate-actions`) via DuckDB. Falls back to a live
+    yfinance fetch only if the local table has no split rows for the ticker.
     """
     try:
-        return CON.execute(
+        df = CON.execute(
             "SELECT date, split_factor AS factor FROM read_parquet(?) "
             "WHERE action_type = 'split' AND symbol = ? ORDER BY date",
             [CORP_ACTIONS_PATH, ticker],
         ).fetchdf()
+        if len(df):
+            return df
     except Exception:
-        return pd.DataFrame(columns=["date", "factor"])
+        pass
+    raw = yf.Ticker(ticker).splits  # Series: DatetimeIndex -> ratio
+    recs = []
+    if raw is not None and len(raw):
+        for idx, ratio in raw.items():
+            recs.append({"date": idx.date(), "factor": float(ratio)})
+    df = pd.DataFrame(recs)
+    if len(df):
+        df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+def get_dividends(ticker):
+    """DataFrame [date, amount]; per-share dividend on each ex-date.
+
+    Reads dividend history from the LOCAL corporate_actions warehouse when
+    available; falls back to a live yfinance fetch otherwise (same policy as
+    get_splits, so tickers not yet ingested still report correctly).
+    """
+    try:
+        df = CON.execute(
+            "SELECT date, amount FROM read_parquet(?) "
+            "WHERE action_type = 'dividend' AND symbol = ? ORDER BY date",
+            [CORP_ACTIONS_PATH, ticker],
+        ).fetchdf()
+        if len(df):
+            return df
+    except Exception:
+        pass
+    raw = yf.Ticker(ticker).dividends  # Series: DatetimeIndex -> per-share amount
+    recs = []
+    if raw is not None and len(raw):
+        for idx, amount in raw.items():
+            recs.append({"date": idx.date(), "amount": float(amount)})
+    df = pd.DataFrame(recs)
+    if len(df):
+        df["date"] = pd.to_datetime(df["date"])
+    return df
 
 
 def cum_factor(ticker, date):
@@ -240,7 +284,36 @@ def build_snapshot(reconciled, date, method="fifo"):
             "unrealized": market - total_cost if market is not None else None,
         })
     holdings.sort(key=lambda h: h["ticker"])
-    return holdings, realized, over_sell
+
+    # Dividend income: cash received on each ex-date = shares held at that date
+    # (current post-split terms) x per-share amount, with the amount scaled by
+    # the cumulative post-split factor so historical per-share dividends align
+    # with today's normalized share counts. Folding into `realized` makes it flow
+    # through every report; `dividends` is returned separately for transparency.
+    dividends = {}
+    div_scope = set(open_pos) | set(realized)
+    for tkr in div_scope:
+        divs = get_dividends(tkr)
+        if len(divs) == 0:
+            continue
+        txs_tkr = txs[txs["ticker"] == tkr].sort_values("date")
+        tx_it = txs_tkr.iterrows()
+        tx = next(tx_it, None)
+        shares = income = 0.0
+        for _, d in divs.iterrows():
+            if d["date"].date() > date.date():
+                continue
+            while tx is not None and tx[1]["date"] < d["date"]:
+                shares += tx[1]["canon_shares"] if tx[1]["side"] == "BUY" else -tx[1]["canon_shares"]
+                tx = next(tx_it, None)
+            if shares > 1e-9:
+                F = cum_factor(tkr, d["date"])
+                income += shares * d["amount"] / F
+        if income:
+            dividends[tkr] = income
+            realized[tkr] = realized.get(tkr, 0.0) + income
+
+    return holdings, realized, over_sell, dividends
 
 
 def monthly_report(df, rec, tolerance, max_date, method="fifo"):
@@ -250,12 +323,12 @@ def monthly_report(df, rec, tolerance, max_date, method="fifo"):
     print(f"\nMonthly snapshots ({first} -> {last}) [{method.upper()}]")
     print("=" * 88)
     print(f"{'Month End':<12}{'Shares':>9}{'Cost $':>13}{'Market Value':>13}"
-          f"{'Unreal. $':>12}{'Realized $':>12}{'Net P&L $':>12}")
+          f"{'Unreal. $':>12}{'Real.+Div $':>12}{'Net P&L $':>12}")
     print("-" * 88)
     period = first
     while period <= last:
         month_end = period.to_timestamp("M")
-        holdings, realized, _ = build_snapshot(rec, month_end, method)
+        holdings, realized, _, _ = build_snapshot(rec, month_end, method)
         shares = sum(h["shares"] for h in holdings)
         cost = sum(h["cost_basis"] for h in holdings)
         val = sum(h["market_value"] for h in holdings if h["market_value"] is not None)
@@ -274,7 +347,7 @@ def monthly_breakdown(rec, max_date, method="fifo"):
     period = first
     while period <= last:
         month_end = period.to_timestamp("M")
-        holdings, realized, _ = build_snapshot(rec, month_end, method)
+        holdings, realized, _, _ = build_snapshot(rec, month_end, method)
         if not holdings and not any(realized.values()):
             period = period + 1
             continue
@@ -282,7 +355,7 @@ def monthly_breakdown(rec, max_date, method="fifo"):
         print(f"Month: {month_end.strftime('%Y-%m-%d')}  [{method.upper()}]")
         print("=" * 96)
         print(f"{'Ticker':<9}{'Shares':>11}{'Cost $':>13}{'Market Value':>13}"
-              f"{'Unrealized $':>13}{'Realized $':>12}{'Total P&L $':>13}")
+              f"{'Unrealized $':>13}{'Real.+Div $':>12}{'Total P&L $':>13}")
         print("-" * 96)
         tot_cost = tot_val = tot_unreal = 0.0
         for h in holdings:
@@ -378,7 +451,7 @@ def portfolio_series(rec, dates, method="fifo"):
     """
     rows = []
     for d in dates:
-        holdings, realized, _ = build_snapshot(rec, d, method)
+        holdings, realized, _, _ = build_snapshot(rec, d, method)
         shares = sum(h["shares"] for h in holdings)
         cost = sum(h["cost_basis"] for h in holdings)
         val = sum(h["market_value"] for h in holdings if h["market_value"] is not None)
@@ -460,7 +533,7 @@ def main():
         return
 
     snap_date = pd.Timestamp(args.date)
-    holdings, realized, over_sell = build_snapshot(rec, snap_date, args.method)
+    holdings, realized, over_sell, dividends = build_snapshot(rec, snap_date, args.method)
     flagged = rec[rec["flag_reason"] != ""]
 
     print(f"\nSnapshot date: {snap_date.date()}")
@@ -484,11 +557,20 @@ def main():
         print(f"{'TOTAL':<8}{'':>12}{tot_cost:>14,.2f}{tot_val:>14,.2f}{tot_pnl:>14,.2f}{pct:>8.1f}%")
 
     if realized:
-        print(f"\nREALIZED P&L ({args.method.upper()}, up to snapshot date):")
+        div_by_tkr = {t: dividends.get(t, 0.0) for t in realized}
+        cap_gains = {t: v - div_by_tkr[t] for t, v in realized.items()}
+        print(f"\nREALIZED P&L ({args.method.upper()}, cap gains, up to snapshot date):")
         print("-" * 78)
-        for tkr, val in sorted(realized.items()):
+        for tkr, val in sorted(cap_gains.items()):
             print(f"  {tkr:<8}{val:+,.2f}")
-        print(f"  {'TOTAL':<8}{sum(realized.values()):+,.2f}")
+        print(f"  {'TOTAL':<8}{sum(cap_gains.values()):+,.2f}")
+
+    if dividends:
+        print("\nDIVIDENDS RECEIVED (up to snapshot date):")
+        print("-" * 78)
+        for tkr, val in sorted(dividends.items()):
+            print(f"  {tkr:<8}{val:+,.2f}")
+        print(f"  {'TOTAL':<8}{sum(dividends.values()):+,.2f}")
 
     if over_sell:
         print("\nWARNING: not enough shares to cover some sells (over-sold):")
@@ -508,7 +590,7 @@ def main():
 
     total_pnl = (tot_val - tot_cost) + sum(realized.values()) if holdings else sum(realized.values())
     print("=" * 78)
-    print(f"NET P&L (realized + unrealized): {total_pnl:+,.2f}")
+    print(f"NET P&L (unrealized + realized + dividends): {total_pnl:+,.2f}")
 
 
 if __name__ == "__main__":

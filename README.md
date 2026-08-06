@@ -499,7 +499,7 @@ python src/stock_scraper/scraper.py --corporate-actions
 python src/stock_scraper/scraper.py --corporate-actions --tickers AAPL GOOGL META
 ```
 
-The MERGE upserts on `(symbol, action_type, date)`, so re-runs are idempotent. `scripts/portfolio_snapshot.py` now reads splits from this table via DuckDB (no network needed at report time), filtering `action_type = 'split'`.
+The MERGE upserts on `(symbol, action_type, date)`, so re-runs are idempotent. `scripts/portfolio_snapshot.py` reads splits and dividends from this table via DuckDB (no network needed at report time), filtering on `action_type`. Dividend income is folded into realized PnL (cap gains + dividends per ticker; shown separately under `DIVIDENDS RECEIVED` in the snapshot). If a ticker isn't in the local table, the snapshot falls back to a live yfinance fetch for both splits and dividends.
 
 ## Planned: Intraday / Hourly OHLCV Data
 
