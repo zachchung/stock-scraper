@@ -172,6 +172,17 @@ def cum_factor(ticker, date):
     return f
 
 
+# Yahoo/local OHLCV stores GBTC in spin-off-adjusted (NAV-based) terms. To get
+# the actual unadjusted market price as traded on the OTCQX, scale it up.
+GBTC_unadjusted_FACTOR = 1.12138
+
+
+def local_price_factor(ticker):
+    """Multiplier applied to local (yfinance) OHLCV to restore the real traded
+    (unadjusted) price. Only GBTC differs (spin-off adjustment)."""
+    return GBTC_unadjusted_FACTOR if ticker == "GBTC" else 1.0
+
+
 def local_price_at(ticker, date):
     """Split-adjusted close (nondent) nearest <= date, or None."""
     p = f"{BASE_DIR}/data/stocks/ohlcv_daily/data/symbol={ticker}/*.parquet"
@@ -182,7 +193,7 @@ def local_price_at(ticker, date):
             "SELECT close FROM read_parquet(?) WHERE date <= ? ORDER BY date DESC LIMIT 1",
             [p, date.strftime("%Y-%m-%d")],
         ).fetchone()
-        return None if row is None else row[0]
+        return None if row is None else row[0] * local_price_factor(ticker)
     except Exception:
         return None
 
@@ -221,7 +232,10 @@ def local_ohlc_at(ticker, date):
             "SELECT high, low, close FROM read_parquet(?) WHERE date <= ? ORDER BY date DESC LIMIT 1",
             [p, date.strftime("%Y-%m-%d")],
         ).fetchone()
-        return None if row is None else row  # (high, low, close)
+        if row is None:
+            return None
+        f = local_price_factor(ticker)
+        return (row[0] * f, row[1] * f, row[2] * f)  # (high, low, close)
     except Exception:
         return None
 
