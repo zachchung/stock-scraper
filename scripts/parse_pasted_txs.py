@@ -37,7 +37,7 @@ def valid_ticker(s):
 import os
 
 OUT_DIR = "/Users/ZacharyChung1/code/stock_scraper/output"
-OUT_NAME = f"transactions_{datetime.date.today():%Y-%m-%d}.csv"
+OUT_NAME = f"transactions_{datetime.datetime.now():%Y-%m-%d_%H%M%S}.csv"
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
