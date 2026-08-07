@@ -1,19 +1,33 @@
 ---
 name: portfolio-snapshot
 description: >
-  Use when the user pastes a block of transaction data (GOOGL/stock buys+sells)
-  in the tab-separated 14-column pair format and asks "how much am I holding
-  and what is the PnL", without prior explanation. Also use for HOLDINGS + PnL
-  reporting over time from that data: monthly comparison, per-stock monthly
-  breakdown, or portfolio-totals-only series (e.g. "what's my PnL at the end of
-  every month", "show one table per month", "monthly totals only"). The skill
-  knows the exact paste structure/rules, parses it to a CSV, and reports
-  holdings + PnL as a FIFO vs LIFO comparison table (single date) or as a
-  month-over-month table via the snapshot CLI. DO NOT use for general stock
+  Use when the user asks "how much am I holding and what is the PnL" for their
+  portfolio (GOOGL/AMZN/MSFT/AAPL/etc.). A transaction CSV likely already
+  exists in the repo's output/ subdirectory (transactions_*.csv or txs_*.csv)
+  and should be reused as the snapshot input — the user does NOT necessarily
+  paste anything. Only if no such CSV exists should you ask the user to paste a
+  block of transaction data in the tab-separated 14-column pair format. Also
+  use for HOLDINGS + PnL reporting over time: monthly comparison, per-stock
+  monthly breakdown, or portfolio-totals-only series (e.g. "what's my PnL at
+  the end of every month", "show one table per month", "monthly totals only").
+  The skill knows the exact paste structure/rules, parses/sources a CSV, and
+  reports holdings + PnL as a FIFO vs LIFO comparison table (single date) or as
+  a month-over-month table via the snapshot CLI. DO NOT use for general stock
   questions or financial advice outside this specific analysis.
 ---
 
 # Portfolio Snapshot
+
+> **START HERE — read before anything else.**
+> Do NOT ask the user to paste transaction data yet. First check whether a
+> transaction CSV already exists in the `output/` SUBDIRECTORY by running:
+> ```bash
+> ls -la /Users/ZacharyChung1/code/stock_scraper/output/
+> ```
+> If it lists a `transactions_*.csv` or `txs_*.csv` file, use the latest one as
+> `--input` and proceed — no paste needed. Only if the `output/` directory has
+> no such CSV should you ask the user to paste the trade block. (Files are
+> NEVER at the repo root; searching `*.csv` or `txs.csv` there will fail.)
 
 Analyzes a pasted trade-history block for ONE OR MULTIPLE tickers (GOOGL,
 AMZN, MSFT, AAPL, etc.) and produces holdings + PnL as of today, shown as a
@@ -42,18 +56,38 @@ Rules:
 
 ## Workflow
 
-1. **Save the pasted block** to a temp file and parse it with the parser
-   (14-col pair format -> flat CSV with header `date,ticker,side,shares,price`).
-   Parser: `/Users/ZacharyChung1/code/stock_scraper/scripts/parse_pasted_txs.py`
+1. **Locate or generate the transaction CSV.** The input CSV (header
+   `date,ticker,side,shares,price`) is required, but copying/pasting the raw
+   trade block is OPTIONAL. Prefer an already-generated CSV.
+
+   - **If a CSV already exists** (most common — one was produced on a prior
+     run), just use it directly as `--input`. **First list the output
+     directory** to find it:
+     ```bash
+     ls -la /Users/ZacharyChung1/code/stock_scraper/output/
+     ```
+     Files live in the `output/` SUBDIRECTORY — they will NOT be found at the
+     repo root, so don't glob `*.csv` there or search for `txs.csv`. Pick the
+     LATEST `transactions_*.csv` or `txs_*.csv` (e.g.
+     `output/transactions_2026-08-07.csv`, `output/txs_2026-08-06.csv`), sorted
+     by the date in the filename. Skip the parser entirely.
+   - **If you need to generate one from a pasted block**, save the block to a
+     temp file and run the parser:
+     ```bash
+     .venv/bin/python scripts/parse_pasted_txs.py < pasted.txt
+     ```
+     The parser writes the CSV itself to the path defined at the top of the
+     script — `OUT_DIR` = `/Users/ZacharyChung1/code/stock_scraper/output` and
+     `OUT_NAME` = `transactions_<today's date>.csv` (e.g.
+     `output/transactions_2026-08-06.csv`). Use that file as `--input` below;
+     do NOT redirect stdout to `txs.csv`. It emits one BUY and/or one SELL row
+     per input line (buy-only lines emit only the BUY row). Ticker is assumed
+     to match the left column.
+2. **Run the snapshot for BOTH methods** (FIFO and LIFO) using the chosen CSV
+   file path from step 1:
    ```bash
-   .venv/bin/python scripts/parse_pasted_txs.py < pasted.txt > txs.csv
-   ```
-   It emits one BUY and/or one SELL row per input line (buy-only lines emit
-   only the BUY row). Ticker is assumed to match the left column.
-2. **Run the snapshot for BOTH methods** (FIFO and LIFO):
-   ```bash
-   .venv/bin/python scripts/portfolio_snapshot.py --input txs.csv --date 2026-08-04 --method fifo
-   .venv/bin/python scripts/portfolio_snapshot.py --input txs.csv --date 2026-08-04 --method lifo
+   .venv/bin/python scripts/portfolio_snapshot.py --input output/transactions_2026-08-06.csv --date 2026-08-06 --method fifo
+   .venv/bin/python scripts/portfolio_snapshot.py --input output/transactions_2026-08-06.csv --date 2026-08-06 --method lifo
    ```
    `--date` = today (the last trade date in the data / current date).
 3. **Present the comparison table**, always in this format (single symbol):
