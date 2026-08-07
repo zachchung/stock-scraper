@@ -16,6 +16,11 @@ def parse_date(s):
     if m:
         yy, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
         return f"{2000+yy}-{mo:02d}-{d:02d}"
+    # Dash-separated YY-M-D -> YYYY-MM-DD (year-first, e.g. 21-3-3 => 2021-03-03)
+    m = re.match(r"(\d{2})-(\d{1,2})-(\d{1,2})", s)
+    if m:
+        yy, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{2000+yy}-{mo:02d}-{d:02d}"
     # Dash-separated DD-MM-YY -> YYYY-MM-DD
     m = re.match(r"(\d{1,2})-(\d{1,2})-(\d{2})", s)
     if m:

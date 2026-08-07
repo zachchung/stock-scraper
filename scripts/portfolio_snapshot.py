@@ -70,6 +70,19 @@ TICKER_ALIASES = {
 }
 
 
+OUT_DIR = "/Users/ZacharyChung1/code/stock_scraper/output"
+
+
+def latest_transactions():
+    """Return the path of the most recent transactions_*.csv in the output dir."""
+    pattern = os.path.join(OUT_DIR, "transactions_*.csv")
+    files = sorted(glob.glob(pattern))
+    if not files:
+        sys.exit(f"No transactions file found in {OUT_DIR} (expected transactions_YYYY-MM-DD.csv). "
+                 "Pass --input explicitly or create one via parse_pasted_txs.py.")
+    return files[-1]
+
+
 def load_transactions(path):
     df = pd.read_csv(path)
     need = {"date", "ticker", "side", "shares", "price"}
@@ -662,7 +675,8 @@ def print_series(rows, schedule, dom, method):
 
 def main():
     ap = argparse.ArgumentParser(description="Portfolio holdings + PnL snapshot with split reconciliation")
-    ap.add_argument("--input", required=True, help="Path to transactions CSV")
+    ap.add_argument("--input", default=None,
+                    help="Path to transactions CSV (default: latest transactions_*.csv in the output dir)")
     ap.add_argument("--date", required=True, help="Snapshot date, YYYY-MM-DD (or last month if --monthly/--series)")
     ap.add_argument("--tolerance", type=float, default=0.15,
                     help="Match tolerance raw vs adjusted price (fraction)")
@@ -690,7 +704,8 @@ def main():
                          "pre-tax div, after-tax div) while holding, up to --date")
     args = ap.parse_args()
 
-    df = load_transactions(args.input)
+    input_path = args.input or latest_transactions()
+    df = load_transactions(input_path)
     rec = normalize(df, args.tolerance)
 
     if args.dividends:
