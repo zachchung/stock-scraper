@@ -502,13 +502,13 @@ def monthly_breakdown(rec, max_date, method="fifo"):
 
 
 def trade_calendar():
-    """Sorted set of US-trading dates (as datetime.date) from the S&P 500 index parquet."""
-    p = f"{BASE_DIR}/data/stocks/ohlcv_daily/data/symbol=*GSPC/*.parquet"
+    """Sorted set of US-trading dates (as datetime.date) from the union of all stock parquets."""
+    p = f"{BASE_DIR}/data/stocks/ohlcv_daily/data/symbol=*/*.parquet"
     if not glob.glob(p):
         return None
     try:
         rows = CON.execute("SELECT DISTINCT date FROM read_parquet(?)", [p]).fetchall()
-        return {pd.to_datetime(x[0]).date() for x in rows}
+        return {pd.to_datetime(x[0]).date() for x in rows if pd.to_datetime(x[0]).weekday() < 5}
     except Exception:
         return None
 
@@ -544,6 +544,8 @@ def series_dates(rec, last, schedule="month-end", dom=None, start=None):
     cal = trade_calendar()
     first = rec["date"].min()
     seq_start = pd.Timestamp(start) if start else first
+    if schedule == "daily":
+        return _daily_dates(cal, seq_start, pd.Timestamp(last))
     dates = []
     period = seq_start.to_period("M")
     last_period = pd.Timestamp(last).to_period("M")
@@ -563,6 +565,18 @@ def series_dates(rec, last, schedule="month-end", dom=None, start=None):
         if day is not None and pd.Timestamp(first) <= day <= pd.Timestamp(last):
             dates.append(day)
         period = period + 1
+    return dates
+
+
+def _daily_dates(cal, start, last):
+    """Every trading day (calendar day if no calendar) from `start` to `last`."""
+    dates = []
+    d = pd.Timestamp(start)
+    end = pd.Timestamp(last)
+    while d <= end:
+        if cal is None or d.date() in cal:
+            dates.append(d)
+        d += pd.Timedelta(days=1)
     return dates
 
 
@@ -687,6 +701,16 @@ def print_series(rows, schedule, dom, method):
               f"{r['dividend_post']:>14,.2f}{r['total_pnl_incl_div']:>15,.2f}")
 
 
+def write_series_csv(rows, path):
+    cols = ["date", "shares", "cost", "value", "unrealized", "realized",
+            "total_pnl_excl_div", "dividend_pre", "dividend_post",
+            "total_pnl_incl_div", "avg_net_cost"]
+    df = pd.DataFrame([{c: r[c] for c in cols} for r in rows])
+    df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+    df.to_csv(path, index=False)
+    print(f"\nWrote {len(rows)} rows to {path}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Portfolio holdings + PnL snapshot with split reconciliation")
     ap.add_argument("--input", default=None,
@@ -704,11 +728,14 @@ def main():
                          "since first purchase (no --series)")
     ap.add_argument("--series", action="store_true",
                     help="Show portfolio TOTALS only, one row per snapshot date (no per-ticker breakdown)")
-    ap.add_argument("--schedule", choices=["month-end", "mdom"], default="month-end",
-                    help="Date rule for --series: 'month-end' (last trading day of month) "
-                         "or 'mdom' (the Nth calendar day, snapped to next trading day)")
+    ap.add_argument("--schedule", choices=["month-end", "mdom", "daily"], default="month-end",
+                    help="Date rule for --series: 'month-end' (last trading day of month), "
+                         "'mdom' (the Nth calendar day, snapped to next trading day), "
+                         "or 'daily' (every trading day)")
     ap.add_argument("--day-of-month", type=int, default=4,
                     help="Day of month for --schedule mdom (default 4)")
+    ap.add_argument("--csv-out", type=str, default=None,
+                    help="Write the --series table to this CSV path instead of stdout")
     ap.add_argument("--start", type=str, default=None,
                     help="First snapshot date to include (default: first trade)")
     ap.add_argument("--method", choices=["fifo", "lifo"], default="fifo",
@@ -730,6 +757,8 @@ def main():
         dates = series_dates(rec, args.date, args.schedule, args.day_of_month, args.start)
         rows = portfolio_series(rec, dates, args.method, args.div_tax_rate)
         print_series(rows, args.schedule, args.day_of_month, args.method)
+        if args.csv_out:
+            write_series_csv(rows, args.csv_out)
         return
 
     if args.monthly_breakdown:
