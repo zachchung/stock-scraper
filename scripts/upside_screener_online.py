@@ -9,7 +9,11 @@ To stay under yfinance rate limits, the work is staged from cheap to expensive:
   4. YTD prices for large caps only (chunked, with retry/backoff)
   5. analyst targets via .info for survivors of the below-S&P500-YTD filter
      (few dozen tickers, chunked with sleep)
+
+Usage:
+  .venv/bin/python scripts/upside_screener_online.py [--top N] [--mcap-floor 100] [--out path.csv]
 """
+import argparse
 import io
 import sys
 import time
@@ -22,7 +26,6 @@ GSPC = "^GSPC"
 BASE_YEAR = 2025            # year whose last close acts as the YTD baseline
 BASE_START = f"{BASE_YEAR}-12-15"
 MCAP_FLOOR = 100e9
-TOP_N = 100
 CHUNK = 40
 RETRIES = 3
 
@@ -107,6 +110,16 @@ def analyst_info(sym):
 
 
 def main():
+    ap = argparse.ArgumentParser(description="S&P500 analyst-upside vs 2026 YTD screener (fully online).")
+    ap.add_argument("--top", type=int, default=None,
+                    help="cap output at top-N by upside (default: all survivors)")
+    ap.add_argument("--mcap-floor", type=float, default=100.0,
+                    help="minimum market cap in $B (default: 100)")
+    ap.add_argument("--out", default=None, help="optional CSV path to write results")
+    args = ap.parse_args()
+
+    mcap_floor = args.mcap_floor * 1e9
+
     syms, names = sp500_universe()
     print(f"universe: {len(syms)} symbols", file=sys.stderr)
 
@@ -119,8 +132,8 @@ def main():
     print(f"S&P500 YTD {sp500_ytd:.2f}% (base {float(sp_base_s.iloc[-1]):.2f} -> {sp_price:.2f} @ {sp.index[-1].date()})", file=sys.stderr)
 
     mcap = all_market_caps(syms)
-    big = [s for s in syms if mcap.get(s) and not pd.isna(mcap[s]) and mcap[s] >= MCAP_FLOOR]
-    print(f"market cap >= $100B: {len(big)}", file=sys.stderr)
+    big = [s for s in syms if mcap.get(s) and not pd.isna(mcap[s]) and mcap[s] >= mcap_floor]
+    print(f"market cap >= ${args.mcap_floor:.0f}B: {len(big)}", file=sys.stderr)
 
     closes = download(big, BASE_START)
 
@@ -151,12 +164,17 @@ def main():
         time.sleep(0.4)
 
     rows.sort(key=lambda r: float(r[6][:-1]), reverse=True)
-    rows = rows[:TOP_N]
+    if args.top:
+        rows = rows[: args.top]
 
     hdr = ["Symbol", "Company", "market_cap", "YTD", "Price", "Mean Tgt", "Upside%", "Analysts", "Rating"]
     print("\t".join(hdr))
     for r in rows:
         print("\t".join(r))
+
+    if args.out:
+        pd.DataFrame(rows, columns=hdr).to_csv(args.out, index=False)
+        print(f"wrote {len(rows)} rows -> {args.out}", file=sys.stderr)
 
 
 if __name__ == "__main__":
