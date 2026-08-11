@@ -313,18 +313,28 @@ CASHFLOW_METRICS = [
 
 def fetch_cashflow_statements(ticker):
     stock = yf.Ticker(ticker)
-    qcf = stock.quarterly_cashflow
-    if qcf is None or qcf.empty:
-        return None
+    statements = {
+        "quarterly": stock.quarterly_cashflow,
+        "annual": stock.cashflow,
+    }
     rows = []
-    for col_name, source_name in CASHFLOW_METRICS:
-        if source_name in qcf.index:
-            for fiscal_date in qcf.columns:
-                val = qcf.loc[source_name, fiscal_date]
+    for frequency, stmt in statements.items():
+        if stmt is None or stmt.empty:
+            continue
+        for col_name, source_name in CASHFLOW_METRICS:
+            if source_name not in stmt.index:
+                continue
+            for fiscal_date in stmt.columns:
+                try:
+                    fd = fiscal_date.to_pydatetime().date()
+                except Exception:
+                    continue
+                val = stmt.loc[source_name, fiscal_date]
                 if pd.notna(val):
                     rows.append({
                         "symbol": ticker,
-                        "fiscal_date": fiscal_date.to_pydatetime().date(),
+                        "frequency": frequency,
+                        "fiscal_date": fd,
                         "metric": col_name,
                         "value": float(val),
                     })
@@ -332,7 +342,7 @@ def fetch_cashflow_statements(ticker):
         return None
     df = pd.DataFrame(rows)
     pivoted = df.pivot_table(
-        index=["symbol", "fiscal_date"],
+        index=["symbol", "frequency", "fiscal_date"],
         columns="metric",
         values="value",
     ).reset_index()
@@ -366,18 +376,28 @@ BALANCE_SHEET_METRICS = [
 
 def fetch_balance_sheets(ticker):
     stock = yf.Ticker(ticker)
-    qbs = stock.quarterly_balance_sheet
-    if qbs is None or qbs.empty:
-        return None
+    statements = {
+        "quarterly": stock.quarterly_balance_sheet,
+        "annual": stock.balance_sheet,
+    }
     rows = []
-    for col_name, source_name in BALANCE_SHEET_METRICS:
-        if source_name in qbs.index:
-            for fiscal_date in qbs.columns:
-                val = qbs.loc[source_name, fiscal_date]
+    for frequency, stmt in statements.items():
+        if stmt is None or stmt.empty:
+            continue
+        for col_name, source_name in BALANCE_SHEET_METRICS:
+            if source_name not in stmt.index:
+                continue
+            for fiscal_date in stmt.columns:
+                try:
+                    fd = fiscal_date.to_pydatetime().date()
+                except Exception:
+                    continue
+                val = stmt.loc[source_name, fiscal_date]
                 if pd.notna(val):
                     rows.append({
                         "symbol": ticker,
-                        "fiscal_date": fiscal_date.to_pydatetime().date(),
+                        "frequency": frequency,
+                        "fiscal_date": fd,
                         "metric": col_name,
                         "value": float(val),
                     })
@@ -385,7 +405,7 @@ def fetch_balance_sheets(ticker):
         return None
     df = pd.DataFrame(rows)
     pivoted = df.pivot_table(
-        index=["symbol", "fiscal_date"],
+        index=["symbol", "frequency", "fiscal_date"],
         columns="metric",
         values="value",
     ).reset_index()
@@ -732,7 +752,7 @@ def write_cashflow_to_iceberg(df):
     spark = get_spark()
     sdf = (
         spark.createDataFrame(df)
-        .dropDuplicates(["symbol", "fiscal_date"])
+        .dropDuplicates(["symbol", "fiscal_date", "frequency"])
     )
     sdf.createOrReplaceTempView("batch")
 
@@ -755,11 +775,16 @@ def write_cashflow_to_iceberg(df):
         PARTITIONED BY (symbol)
     """)
 
-    new_rows = count_new_rows(CASHFLOW_TABLE, ["symbol", "fiscal_date"])
+    existing_cols = {c.name for c in spark.table(CASHFLOW_TABLE).schema}
+    if "frequency" not in existing_cols:
+        spark.sql(f"ALTER TABLE {CASHFLOW_TABLE} ADD COLUMN frequency STRING")
+        spark.sql(f"UPDATE {CASHFLOW_TABLE} SET frequency = 'quarterly' WHERE frequency IS NULL")
+
+    new_rows = count_new_rows(CASHFLOW_TABLE, ["symbol", "fiscal_date", "frequency"])
     spark.sql(f"""
         MERGE INTO {CASHFLOW_TABLE} t
         USING batch b
-        ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date
+        ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date AND t.frequency = b.frequency
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
@@ -769,7 +794,7 @@ def write_balance_sheets_to_iceberg(df):
     spark = get_spark()
     sdf = (
         spark.createDataFrame(df)
-        .dropDuplicates(["symbol", "fiscal_date"])
+        .dropDuplicates(["symbol", "fiscal_date", "frequency"])
     )
     sdf.createOrReplaceTempView("batch")
 
@@ -801,11 +826,16 @@ def write_balance_sheets_to_iceberg(df):
         PARTITIONED BY (symbol)
     """)
 
-    new_rows = count_new_rows(BALANCE_SHEET_TABLE, ["symbol", "fiscal_date"])
+    existing_cols = {c.name for c in spark.table(BALANCE_SHEET_TABLE).schema}
+    if "frequency" not in existing_cols:
+        spark.sql(f"ALTER TABLE {BALANCE_SHEET_TABLE} ADD COLUMN frequency STRING")
+        spark.sql(f"UPDATE {BALANCE_SHEET_TABLE} SET frequency = 'quarterly' WHERE frequency IS NULL")
+
+    new_rows = count_new_rows(BALANCE_SHEET_TABLE, ["symbol", "fiscal_date", "frequency"])
     spark.sql(f"""
         MERGE INTO {BALANCE_SHEET_TABLE} t
         USING batch b
-        ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date
+        ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date AND t.frequency = b.frequency
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
