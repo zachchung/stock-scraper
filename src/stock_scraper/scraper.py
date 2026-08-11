@@ -258,18 +258,28 @@ INCOME_METRICS = [
 
 def fetch_income_statements(ticker):
     stock = yf.Ticker(ticker)
-    qis = stock.quarterly_income_stmt
-    if qis is None or qis.empty:
-        return None
+    statements = {
+        "quarterly": stock.quarterly_income_stmt,
+        "annual": stock.income_stmt,
+    }
     rows = []
-    for col_name, source_name in INCOME_METRICS:
-        if source_name in qis.index:
-            for fiscal_date in qis.columns:
-                val = qis.loc[source_name, fiscal_date]
+    for frequency, stmt in statements.items():
+        if stmt is None or stmt.empty:
+            continue
+        for col_name, source_name in INCOME_METRICS:
+            if source_name not in stmt.index:
+                continue
+            for fiscal_date in stmt.columns:
+                try:
+                    fd = fiscal_date.to_pydatetime().date()
+                except Exception:
+                    continue
+                val = stmt.loc[source_name, fiscal_date]
                 if pd.notna(val):
                     rows.append({
                         "symbol": ticker,
-                        "fiscal_date": fiscal_date.to_pydatetime().date(),
+                        "frequency": frequency,
+                        "fiscal_date": fd,
                         "metric": col_name,
                         "value": float(val),
                     })
@@ -277,7 +287,7 @@ def fetch_income_statements(ticker):
         return None
     df = pd.DataFrame(rows)
     pivoted = df.pivot_table(
-        index=["symbol", "fiscal_date"],
+        index=["symbol", "frequency", "fiscal_date"],
         columns="metric",
         values="value",
     ).reset_index()
@@ -680,7 +690,7 @@ def write_income_to_iceberg(df):
     spark = get_spark()
     sdf = (
         spark.createDataFrame(df)
-        .dropDuplicates(["symbol", "fiscal_date"])
+        .dropDuplicates(["symbol", "fiscal_date", "frequency"])
     )
     sdf.createOrReplaceTempView("batch")
 
@@ -704,12 +714,15 @@ def write_income_to_iceberg(df):
     existing_cols = {c.name for c in spark.table(INCOME_TABLE).schema}
     if "net_profit_margin" not in existing_cols:
         spark.sql(f"ALTER TABLE {INCOME_TABLE} ADD COLUMN net_profit_margin DOUBLE")
+    if "frequency" not in existing_cols:
+        spark.sql(f"ALTER TABLE {INCOME_TABLE} ADD COLUMN frequency STRING")
+        spark.sql(f"UPDATE {INCOME_TABLE} SET frequency = 'quarterly' WHERE frequency IS NULL")
 
-    new_rows = count_new_rows(INCOME_TABLE, ["symbol", "fiscal_date"])
+    new_rows = count_new_rows(INCOME_TABLE, ["symbol", "fiscal_date", "frequency"])
     spark.sql(f"""
         MERGE INTO {INCOME_TABLE} t
         USING batch b
-        ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date
+        ON t.symbol = b.symbol AND t.fiscal_date = b.fiscal_date AND t.frequency = b.frequency
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
     """)
@@ -1110,7 +1123,8 @@ def main():
                 idf = fetch_income_statements(ticker)
                 if idf is not None and not idf.empty:
                     n = write_income_to_iceberg(idf) or 0
-                    parts.append(f"income+{n}")
+                    n_ann = int((idf["frequency"] == "annual").sum())
+                    parts.append(f"income+{n}({n_ann} annual)")
                 eef = fetch_eps_estimates(ticker)
                 if eef is not None and not eef.empty:
                     n = write_eps_estimates_to_iceberg(eef) or 0
