@@ -10,7 +10,7 @@ def usage():
     print("Usage: python drawdown_analysis.py [SYMBOLS] [MIN_DEPTH_PCT] [START]")
     print("  SYMBOLS       comma-separated tickers, e.g. 'v' or 'v,spgi' (default: V)")
     print("  MIN_DEPTH_PCT min drawdown depth in % (default: 10)")
-    print("  START         start lookback: years as plain number '5' or a date YYYY-MM-DD (default: 5 years)")
+    print("  START         start lookback: years as plain number '5' or a date YYYY-MM-DD (default: 10 years)")
     sys.exit(1)
 
 symbols = sys.argv[1].upper().split(",") if len(sys.argv) > 1 else ["V"]
@@ -18,7 +18,7 @@ try:
     min_depth = float(sys.argv[2]) if len(sys.argv) > 2 else 10.0
 except ValueError:
     usage()
-start = sys.argv[3] if len(sys.argv) > 3 else "5"
+start = sys.argv[3] if len(sys.argv) > 3 else "10"
 
 try:
     con = duckdb.connect(DB, read_only=True)
