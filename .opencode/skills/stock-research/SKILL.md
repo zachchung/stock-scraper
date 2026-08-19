@@ -6,7 +6,8 @@ description: >
   history, TTM P/E, market cap, and net profit margin — plus a moat
   assessment and a score. IMPORTANT: the report must show the FULL annual EPS
   history (every fiscal year the script returns, typically 10-20 years after
-  EDGAR backfill), NEVER truncated to just 5 years. Uses the local
+  EDGAR backfill), NEVER truncated to just 5 years, AND must include the
+  terminal EPS bar chart (run the script with --chart). Uses the local
   stock_scraper DuckDB dataset (scripts/stock_research.py), falling back to
   yfinance only for EPS history when fewer than 5 annual records exist
   locally. DO NOT use for general stock questions or financial advice outside
@@ -36,19 +37,21 @@ stocks.duckdb
 
 ## Running
 
+ALWAYS run with `--chart` so the bar chart is produced:
+
 ```bash
-.venv/bin/python scripts/stock_research.py <SYMBOL>
 .venv/bin/python scripts/stock_research.py <SYMBOL> --chart
 ```
 
 - `<SYMBOL>` — ticker (e.g. `V`, `AAPL`, `DIS`, `META`), optional, defaults to `V`.
-- `--chart` — also render the annual EPS history as a terminal bar chart
-  (same chart as `scripts/eps_growth.py --chart`).
+- `--chart` — required; renders the annual EPS history as a terminal bar
+  chart (same chart as `scripts/eps_growth.py --chart`).
 
 The script prints a snapshot with: current price/date, market cap, TTM &
 forward P/E, net profit margin, ROE, analyst target + upside %, % down from
 ATH, 52wk high/low, the full annual EPS history (every available fiscal year
-with YoY % and a last-5-yr CAGR line), and a valuation section.
+with YoY % and a last-5-yr CAGR line), the EPS bar chart, and a valuation
+section.
 
 ## Report format
 
@@ -85,6 +88,26 @@ locally:
 For a ticker with full backfilled history, list every year the script
 returns — e.g. AAPL from FY2007 ($0.14) through FY2025 ($7.46), each with its
 YoY % (the oldest year has no YoY). 5-yr CAGR ≈ **+7.4%** for AAPL.
+
+## EPS bar chart (ALWAYS include)
+
+The script prints a horizontal bar chart of split-adjusted annual EPS
+(█ positive year, ▒ loss year), with the EPS value and YoY % in brackets on
+each bar. **Reproduce this chart in the report** inside a fenced code block,
+right after the EPS table, copying every line the script prints (abbreviated
+example only):
+
+```text
+annual EPS (split-adjusted), █ positive / ▒ loss year:
+  2007  █                                            0.14 (--)
+  2008  █                                            0.24 (+72.5%)
+  ...
+  2025  ████████████████████████████████████████     7.46 (+22.7%)
+```
+
+Do NOT omit or summarize the chart — the user expects the full rendered
+chart. If the script errors, fall back to building the same chart manually
+from the EPS table (bar length proportional to |EPS|, max bar = 40 chars).
 
 Notes:
 - FY year labels follow the company's fiscal year end (the script prints the
