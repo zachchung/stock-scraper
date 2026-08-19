@@ -4,11 +4,13 @@ description: >
   Use when the user asks for a single-stock research snapshot (V, AAPL, MSFT,
   DIS, etc.) covering analyst upside, % down from ATH, annual EPS growth
   history, TTM P/E, market cap, and net profit margin — plus a moat
-  assessment and a score. Uses the local stock_scraper DuckDB dataset
-  (scripts/stock_research.py), falling back to yfinance only for EPS history
-  when fewer than 5 annual records exist locally.
-  DO NOT use for general stock questions or financial advice outside this
-  specific research-snapshot report.
+  assessment and a score. IMPORTANT: the report must show the FULL annual EPS
+  history (every fiscal year the script returns, typically 10-20 years after
+  EDGAR backfill), NEVER truncated to just 5 years. Uses the local
+  stock_scraper DuckDB dataset (scripts/stock_research.py), falling back to
+  yfinance only for EPS history when fewer than 5 annual records exist
+  locally. DO NOT use for general stock questions or financial advice outside
+  this specific research-snapshot report.
 ---
 
 # Stock Research Snapshot
