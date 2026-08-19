@@ -9,6 +9,7 @@ CAGR line.
 Usage:
   python scripts/eps_growth.py AAPL
   python scripts/eps_growth.py AAPL MSFT --years 10
+  python scripts/eps_growth.py AAPL --chart   # also draw a terminal bar chart
 """
 
 import argparse
@@ -72,6 +73,32 @@ def growth_table(df, split_factors, cagr_years):
     return out
 
 
+def print_bar_chart(table):
+    """Horizontal bar chart of split-adjusted annual EPS in the terminal."""
+    df = table.dropna(subset=["eps_adj"])
+    if df.empty:
+        return
+    max_abs = max(abs(v) for v in df["eps_adj"]) or 1.0
+    width = 40
+    tty = sys.stdout.isatty()
+    GREEN, RED, RESET = "\033[32m", "\033[31m", "\033[0m"
+    print("  annual EPS (split-adjusted), █ positive / ▒ loss year:")
+    for _, r in df.iterrows():
+        v = r["eps_adj"]
+        d = r["fiscal_date"]
+        ds = d.strftime("%Y") if hasattr(d, "strftime") else str(d)[:4]
+        bar = "█" if v >= 0 else "▒"
+        n_blocks = int(abs(v) / max_abs * width)
+        if v != 0:
+            n_blocks = max(1, n_blocks)
+        fill = bar * n_blocks
+        if tty:
+            color = GREEN if v >= 0 else RED
+            print(f"  {ds}  {color}{fill}{RESET:<{width}} {v:8.2f}")
+        else:
+            print(f"  {ds}  {fill:<{width}} {v:8.2f}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Annual EPS growth with stock-split normalization."
@@ -79,6 +106,8 @@ def main():
     parser.add_argument("tickers", nargs="+", help="Tickers (e.g. AAPL MSFT)")
     parser.add_argument("--years", type=int, default=5,
                         help="CAGR window in years (default: 5)")
+    parser.add_argument("--chart", action="store_true",
+                        help="Also draw a terminal bar chart of annual EPS")
     args = parser.parse_args()
 
     con = duckdb.connect()
@@ -101,6 +130,8 @@ def main():
         cagr = table["cagr_yrs"].dropna()
         if not cagr.empty:
             print(f"  {cagr.iloc[-1]}")
+        if args.chart:
+            print_bar_chart(table)
         print()
 
 

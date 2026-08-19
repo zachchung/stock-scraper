@@ -504,6 +504,9 @@ python scripts/eps_growth.py AAPL MSFT NVDA
 
 # Change the CAGR window
 python scripts/eps_growth.py AAPL --years 10
+
+# Also draw a terminal bar chart of annual EPS (█ positive, ▒ loss year)
+python scripts/eps_growth.py AAPL --chart
 ```
 
 `scripts/stock_research.py` applies the same normalization to the annual EPS
