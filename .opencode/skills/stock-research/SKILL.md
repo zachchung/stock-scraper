@@ -51,7 +51,10 @@ with YoY % and a last-5-yr CAGR line), and a valuation section.
 ## Report format
 
 Present the output to the user as a Markdown table, mirroring the script's
-sections. Example invocation and expected layout:
+sections. **The annual EPS table must include EVERY fiscal year the script
+prints** — AAPL/MSFT/MU/GOOGL have 13–19 years after the EDGAR backfill. Do
+NOT truncate it to the last 5 years. The example below is abbreviated for
+illustration only.
 
 ```bash
 .venv/bin/python scripts/stock_research.py V
@@ -66,16 +69,20 @@ sections. Example invocation and expected layout:
 | Net profit margin | **50.8%** |
 | Return on equity | 61.2% |
 
-Annual diluted EPS (fiscal year):
+Annual diluted EPS (fiscal year) — **reproduce ALL rows the script prints**,
+oldest to newest. This example is abbreviated; V only has these 4 years
+locally:
 
 | FY | EPS | YoY |
 |---|---|---|
-| FY2022 | $7.00 | +24.3% |
+| FY2022 | $7.00 | — |
 | FY2023 | $8.28 | +18.3% |
 | FY2024 | $9.73 | +17.5% |
 | FY2025 | $10.20 | +4.8% |
 
-5-yr EPS CAGR ≈ **16%**.
+For a ticker with full backfilled history, list every year the script
+returns — e.g. AAPL from FY2007 ($0.14) through FY2025 ($7.46), each with its
+YoY % (the oldest year has no YoY). 5-yr CAGR ≈ **+7.4%** for AAPL.
 
 Notes:
 - FY year labels follow the company's fiscal year end (the script prints the
@@ -84,9 +91,9 @@ Notes:
   detects each year's split basis via implied shares = net_income / diluted_eps),
   so YoY % and CAGR are not distorted by stock splits.
 - YoY % = current FY EPS vs the immediately preceding FY.
-- CAGR is computed over however many annual rows are available (up to 5); if
-  the local DB + yfinance together provide fewer than 5 years, state the
-  actual number of years shown.
+- The EPS table shows the FULL history; the CAGR line covers the most recent
+  5 fiscal years (or fewer if that's all the data has — state the actual
+  window in that case).
 
 ## Moat and score (agent judgment)
 
