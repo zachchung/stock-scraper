@@ -73,34 +73,6 @@ def growth_table(df, split_factors, cagr_years):
     return out
 
 
-def print_bar_chart(table):
-    """Horizontal bar chart of split-adjusted annual EPS in the terminal."""
-    df = table.dropna(subset=["eps_adj"])
-    if df.empty:
-        return
-    max_abs = max(abs(v) for v in df["eps_adj"]) or 1.0
-    width = 40
-    tty = sys.stdout.isatty()
-    GREEN, RED, RESET = "\033[32m", "\033[31m", "\033[0m"
-    print("  annual EPS (split-adjusted), █ positive / ▒ loss year:")
-    for _, r in df.iterrows():
-        v = r["eps_adj"]
-        d = r["fiscal_date"]
-        ds = d.strftime("%Y") if hasattr(d, "strftime") else str(d)[:4]
-        yoy = r["yoy_pct"]
-        pct = f"({yoy:+.1f}%)" if pd.notna(yoy) else "(--)"
-        bar = "█" if v >= 0 else "▒"
-        n_blocks = int(abs(v) / max_abs * width)
-        if v != 0:
-            n_blocks = max(1, n_blocks)
-        fill = bar * n_blocks
-        if tty:
-            color = GREEN if v >= 0 else RED
-            print(f"  {ds}  {color}{fill}{RESET:<{width}} {v:8.2f} {pct}")
-        else:
-            print(f"  {ds}  {fill:<{width}} {v:8.2f} {pct}")
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Annual EPS growth with stock-split normalization."
@@ -133,7 +105,7 @@ def main():
         if not cagr.empty:
             print(f"  {cagr.iloc[-1]}")
         if args.chart:
-            print_bar_chart(table)
+            split_adjust.print_bar_chart(table)
         print()
 
 

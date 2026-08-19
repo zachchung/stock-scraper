@@ -17,6 +17,9 @@ Both scripts/eps_growth.py and scripts/stock_research.py use this module.
 
 
 import math
+import sys
+
+import pandas as pd
 
 
 def _match_split(ratio, split_factors):
@@ -98,3 +101,32 @@ def split_factors_from_rows(split_rows):
     """Extract the split-factor list from corporate_actions rows
     (each row is (date, split_factor))."""
     return [r[1] for r in split_rows if r[1] and r[1] > 1]
+
+
+def print_bar_chart(table):
+    """Horizontal bar chart of split-adjusted annual EPS in the terminal.
+    `table` is a DataFrame with fiscal_date, eps_adj and yoy_pct columns."""
+    df = table.dropna(subset=["eps_adj"])
+    if df.empty:
+        return
+    max_abs = max(abs(v) for v in df["eps_adj"]) or 1.0
+    width = 40
+    tty = sys.stdout.isatty()
+    GREEN, RED, RESET = "\033[32m", "\033[31m", "\033[0m"
+    print("  annual EPS (split-adjusted), █ positive / ▒ loss year:")
+    for _, r in df.iterrows():
+        v = r["eps_adj"]
+        d = r["fiscal_date"]
+        ds = d.strftime("%Y") if hasattr(d, "strftime") else str(d)[:4]
+        yoy = r["yoy_pct"]
+        pct = f"({yoy:+.1f}%)" if pd.notna(yoy) else "(--)"
+        bar = "█" if v >= 0 else "▒"
+        n_blocks = int(abs(v) / max_abs * width)
+        if v != 0:
+            n_blocks = max(1, n_blocks)
+        fill = bar * n_blocks
+        if tty:
+            color = GREEN if v >= 0 else RED
+            print(f"  {ds}  {color}{fill}{RESET:<{width}} {v:8.2f} {pct}")
+        else:
+            print(f"  {ds}  {fill:<{width}} {v:8.2f} {pct}")

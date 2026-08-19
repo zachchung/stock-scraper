@@ -1,10 +1,18 @@
+import argparse
 import os
 import sys
+
+import pandas as pd
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(BASE, "stocks.duckdb")
 
-symbol = sys.argv[1].upper() if len(sys.argv) > 1 else "V"
+parser = argparse.ArgumentParser(description="Single-stock research snapshot.")
+parser.add_argument("symbol", nargs="?", default="V", help="Ticker (e.g. AAPL)")
+parser.add_argument("--chart", action="store_true",
+                    help="Also draw a terminal bar chart of annual EPS")
+args = parser.parse_args()
+symbol = args.symbol.upper()
 
 try:
     import duckdb
@@ -130,7 +138,7 @@ years = sorted(eps_map.keys(), reverse=True)
 if years:
     print()
     print("Annual EPS (fiscal year)")
-    for i, y in enumerate(years[:7]):
+    for i, y in enumerate(years):
         d, e = eps_map[y]
         label = f"FY{d.year % 100:02d} ({d.strftime('%m-%d')} end)"
         if i < len(years) - 1:
@@ -145,6 +153,15 @@ if years:
         end = eps_map[tail[0]][1]
         cagr = ((end / start) ** (1 / (len(tail) - 1)) - 1) * 100
         print(f"  {'CAGR (last ' + str(len(tail)) + ' yrs)':<22} {cagr:+.1f}%")
+    if args.chart:
+        asc = sorted(eps_map.keys())
+        chart_rows = []
+        for i, y in enumerate(asc):
+            d, e = eps_map[y]
+            yoy = ((e / eps_map[asc[i - 1]][1] - 1) * 100) if i > 0 else None
+            chart_rows.append({"fiscal_date": d, "eps_adj": e, "yoy_pct": yoy})
+        print()
+        split_adjust.print_bar_chart(pd.DataFrame(chart_rows))
 else:
     print()
     print("Annual EPS: no annual income statement data available")

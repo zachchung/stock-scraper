@@ -2,8 +2,8 @@
 name: stock-research
 description: >
   Use when the user asks for a single-stock research snapshot (V, AAPL, MSFT,
-  DIS, etc.) covering analyst upside, % down from ATH, annual EPS growth over
-  the last 5 years, TTM P/E, market cap, and net profit margin — plus a moat
+  DIS, etc.) covering analyst upside, % down from ATH, annual EPS growth
+  history, TTM P/E, market cap, and net profit margin — plus a moat
   assessment and a score. Uses the local stock_scraper DuckDB dataset
   (scripts/stock_research.py), falling back to yfinance only for EPS history
   when fewer than 5 annual records exist locally.
@@ -36,14 +36,17 @@ stocks.duckdb
 
 ```bash
 .venv/bin/python scripts/stock_research.py <SYMBOL>
+.venv/bin/python scripts/stock_research.py <SYMBOL> --chart
 ```
 
 - `<SYMBOL>` — ticker (e.g. `V`, `AAPL`, `DIS`, `META`), optional, defaults to `V`.
+- `--chart` — also render the annual EPS history as a terminal bar chart
+  (same chart as `scripts/eps_growth.py --chart`).
 
 The script prints a snapshot with: current price/date, market cap, TTM &
 forward P/E, net profit margin, ROE, analyst target + upside %, % down from
-ATH, 52wk high/low, annual EPS table (last ~5 fiscal years with YoY % and a
-CAGR line), and a valuation section.
+ATH, 52wk high/low, the full annual EPS history (every available fiscal year
+with YoY % and a last-5-yr CAGR line), and a valuation section.
 
 ## Report format
 

@@ -510,7 +510,13 @@ python scripts/eps_growth.py AAPL --chart
 ```
 
 `scripts/stock_research.py` applies the same normalization to the annual EPS
-table and CAGR in its research snapshot.
+table (now shown in full, not just ~5 years) and CAGR in its research
+snapshot, and supports the same terminal chart:
+
+```bash
+python scripts/stock_research.py AAPL          # full EPS history + CAGR
+python scripts/stock_research.py AAPL --chart  # plus terminal bar chart
+```
 
 ## Iceberg snapshot maintenance
 Every ingestion run creates a new snapshot; old data files stay on disk until
