@@ -16,6 +16,9 @@ Both scripts/eps_growth.py and scripts/stock_research.py use this module.
 """
 
 
+import math
+
+
 def _match_split(ratio, split_factors):
     """Find the split factor f (new shares per 1 old) that best explains a
     jump in implied shares. Prefers splits actually recorded in the local
@@ -40,24 +43,48 @@ def compute_split_factors(dates, eps, net_income, split_factors):
     - eps:          diluted EPS per year (None for missing)
     - net_income:   net income per year (None for missing)
     - split_factors: split factors recorded in corporate_actions, e.g. [7.0, 4.0]
+
+    When a year lacks net_income (no implied shares), the split factor is
+    detected by comparing against the nearest newer year that has data, and is
+    applied uniformly across the gap (e.g. AVGO 2019-2021 have EPS but no
+    net_income; the 10:1 split between 2018 and 2022 is still detected).
     """
     n = len(dates)
     div = [1.0] * n
     implied = [None] * n
     for i in range(n):
-        if eps[i] and net_income[i]:
-            implied[i] = net_income[i] / eps[i]
+        if eps[i] is None or net_income[i] is None:
+            continue
+        try:
+            e = float(eps[i])
+            ni = float(net_income[i])
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(e) and math.isfinite(ni):
+            implied[i] = ni / e
+
+    # next index (> i) that has a valid implied share count
+    nxt = [None] * n
+    j = None
+    for i in range(n - 1, -1, -1):
+        nxt[i] = j
+        if implied[i] is not None:
+            j = i
 
     for i in range(n - 2, -1, -1):
         div[i] = div[i + 1]
-        if implied[i] is None or implied[i + 1] is None:
+        j = nxt[i]
+        if j is None or implied[i] is None:
             continue
-        if implied[i] <= 0 or implied[i + 1] <= 0:
+        if implied[i] <= 0 or implied[j] <= 0:
             continue
-        ratio = implied[i + 1] / implied[i]
+        ratio = implied[j] / implied[i]
         f = _match_split(ratio, split_factors)
         if f is not None:
-            div[i] = div[i + 1] * f
+            # split sits somewhere between year i (older basis) and year j;
+            # every year in [i, j) shares year i's basis, so apply f to all
+            for k in range(i, j):
+                div[k] = div[j] * f
     return div
 
 
