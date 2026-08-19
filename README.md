@@ -446,6 +446,44 @@ python src/stock_scraper/scraper.py --fundamentals --tickers AAPL MSFT META
 python src/stock_scraper/scraper.py --macro --period 10y
 ```
 
+## Income Statement History Backfill (SEC EDGAR)
+
+### Motivation
+
+yfinance only exposes ~5 years of annual income statement history. SEC EDGAR's
+XBRL `companyfacts` API has the full as-reported history (back to the 1990s for
+most US filers). `scripts/edgar_income.py` backfills older annual periods into
+the existing `income_statements` table — same schema, same `frequency='annual'`
+rows — so long-term EPS/revenue/margin analysis works locally.
+
+### How it works
+
+- Resolves ticker → CIK via SEC `company_tickers.json`, then fetches
+  `data.sec.gov/api/xbrl/companyfacts/CIK##########.json`.
+- Maps XBRL tags to the `income_statements` columns: `Revenues`/`SalesRevenueNet`
+  → `total_revenue`, `GrossProfit`, `OperatingIncomeLoss`, `NetIncomeLoss`,
+  `EarningsPerShareDiluted`, and computes `ebitda = operating income +
+  depreciation/amortization`.
+- Keeps only annual periods (10-K/20-F, ~360-day span) from the latest filing
+  per fiscal year (max accession number), normalizing fiscal dates to month-end
+  to match yfinance's convention.
+- Merges into `local.stocks.income_statements` via `scraper.write_income_to_iceberg`.
+
+By default it only backfills periods **not already present** (recent yfinance
+rows are left untouched). Use `--update` to also refresh existing rows from
+EDGAR (authoritative, includes restatements).
+
+```bash
+# Backfill older annual history for specific tickers
+python scripts/edgar_income.py AAPL MSFT GOOGL
+
+# Only load fiscal years up to a cutoff (leave the recent ones from yfinance)
+python scripts/edgar_income.py AAPL --max-year 2020
+
+# Full refresh including already-present rows
+python scripts/edgar_income.py AAPL --update
+```
+
 ## Iceberg snapshot maintenance
 Every ingestion run creates a new snapshot; old data files stay on disk until
 snapshots are expired, which can cause duplicate rows when reading via raw
