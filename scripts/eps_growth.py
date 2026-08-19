@@ -87,6 +87,8 @@ def print_bar_chart(table):
         v = r["eps_adj"]
         d = r["fiscal_date"]
         ds = d.strftime("%Y") if hasattr(d, "strftime") else str(d)[:4]
+        yoy = r["yoy_pct"]
+        pct = f"({yoy:+.1f}%)" if pd.notna(yoy) else "(--)"
         bar = "█" if v >= 0 else "▒"
         n_blocks = int(abs(v) / max_abs * width)
         if v != 0:
@@ -94,9 +96,9 @@ def print_bar_chart(table):
         fill = bar * n_blocks
         if tty:
             color = GREEN if v >= 0 else RED
-            print(f"  {ds}  {color}{fill}{RESET:<{width}} {v:8.2f}")
+            print(f"  {ds}  {color}{fill}{RESET:<{width}} {v:8.2f} {pct}")
         else:
-            print(f"  {ds}  {fill:<{width}} {v:8.2f}")
+            print(f"  {ds}  {fill:<{width}} {v:8.2f} {pct}")
 
 
 def main():
