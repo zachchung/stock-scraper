@@ -484,6 +484,25 @@ python scripts/edgar_income.py AAPL --max-year 2020
 python scripts/edgar_income.py AAPL --update
 ```
 
+### Annual EPS growth (split-adjusted)
+
+EDGAR/yfinance restate historical EPS on mixed split bases (some years pre-split,
+some post-split), which creates fake YoY drops at split boundaries (e.g. AAPL
+shows FY11 EPS $27.68 then FY12 $6.31 — a 7:1 split basis change, not a decline).
+`scripts/split_adjust.py` detects each year's basis via implied shares
+(net_income / diluted_eps) and normalizes everything to the current basis.
+
+```bash
+# Annual EPS growth with split normalization for any tickers
+python scripts/eps_growth.py AAPL MSFT NVDA
+
+# Change the CAGR window
+python scripts/eps_growth.py AAPL --years 10
+```
+
+`scripts/stock_research.py` applies the same normalization to the annual EPS
+table and CAGR in its research snapshot.
+
 ## Iceberg snapshot maintenance
 Every ingestion run creates a new snapshot; old data files stay on disk until
 snapshots are expired, which can cause duplicate rows when reading via raw

@@ -28,7 +28,8 @@ stocks.duckdb
 ├── fundamentals_snapshot   → market cap, TTM/forward P/E, net profit margin, ROE, ATH, 52wk range
 ├── analyst_targets         → mean/high/low price targets, recommendation, analyst count
 ├── ohlcv                   → latest close (current price)
-└── income_statements       → annual diluted EPS history (frequency='annual')
+├── income_statements       → annual diluted EPS history (frequency='annual')
+└── corporate_actions       → split history (used to normalize EPS across splits)
 ```
 
 ## Running
@@ -76,6 +77,9 @@ Annual diluted EPS (fiscal year):
 Notes:
 - FY year labels follow the company's fiscal year end (the script prints the
   fiscal-month/day end date on each row).
+- EPS values are **split-adjusted to the current basis** (`scripts/split_adjust.py`
+  detects each year's split basis via implied shares = net_income / diluted_eps),
+  so YoY % and CAGR are not distorted by stock splits.
 - YoY % = current FY EPS vs the immediately preceding FY.
 - CAGR is computed over however many annual rows are available (up to 5); if
   the local DB + yfinance together provide fewer than 5 years, state the

@@ -51,11 +51,25 @@ analyst = q(f"{tbl('analyst_targets', 'target_mean, target_high, target_low, rec
 analyst = analyst[0] if analyst else None
 
 annual_cond = "frequency='annual'"
-eps_rows = q(f"{tbl('income_statements', 'fiscal_date, diluted_eps, total_revenue', cond=annual_cond)} ORDER BY fiscal_date DESC")
+eps_rows = q(f"{tbl('income_statements', 'fiscal_date, diluted_eps, total_revenue, net_income', cond=annual_cond)} ORDER BY fiscal_date ASC")
+split_cond = "action_type='split' AND split_factor > 1"
+split_rows = q(f"{tbl('corporate_actions', 'date, split_factor', cond=split_cond)} ORDER BY date")
 
 import math
+import split_adjust
 
-eps_map = {d.year: (d, e) for d, e, _ in eps_rows if e is not None}
+# EDGAR/yfinance restate historical EPS on mixed split bases (some years pre-split,
+# some post-split). Normalize every year to the current basis via implied shares.
+dates = [r[0] for r in eps_rows]
+eps = [r[1] for r in eps_rows]
+ni = [r[3] for r in eps_rows]
+split_factors = [r[1] for r in split_rows if r[1] and r[1] > 1]
+eps_adj = split_adjust.adjusted_eps(dates, eps, ni, split_factors)
+
+eps_map = {}
+for d, e in zip(dates, eps_adj):
+    if e is not None and not (isinstance(e, float) and math.isnan(e)):
+        eps_map[d.year] = (d, e)
 if len(eps_map) < 5:
     try:
         import yfinance as yf
