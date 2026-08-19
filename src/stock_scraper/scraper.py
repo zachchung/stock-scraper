@@ -14,6 +14,11 @@ from dateutil.relativedelta import relativedelta
 from pyspark.sql import SparkSession, types as T
 from pyspark.sql.functions import col, to_date
 
+try:
+    from stock_scraper import edgar
+except ModuleNotFoundError:
+    import edgar
+
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 WAREHOUSE_PATH = "/Users/ZacharyChung1/code/stock_scraper/data"
@@ -748,6 +753,44 @@ def write_income_to_iceberg(df):
     """)
     return new_rows
 
+def backfill_income_edgar(ticker):
+    """Extend annual income statements beyond yfinance's ~5y window using SEC
+    EDGAR companyfacts. Idempotent: only inserts annual periods not already
+    present. Skips quickly if the table already holds long history for this
+    symbol (oldest annual fiscal_date > 8 years ago). Returns rows loaded."""
+    spark = get_spark()
+    try:
+        oldest = spark.sql(
+            f"SELECT MIN(fiscal_date) AS m FROM {INCOME_TABLE} "
+            f"WHERE symbol='{ticker}' AND frequency='annual'"
+        ).first()["m"]
+        if oldest is not None and oldest < (date.today() - timedelta(days=8 * 365)):
+            return 0
+    except Exception:
+        pass
+
+    cik = edgar.resolve_cik(ticker)
+    if cik is None:
+        return 0
+    try:
+        facts = edgar.fetch_companyfacts(cik)
+    except Exception:
+        return 0
+    df = edgar.build_rows(ticker, facts)
+    if df.empty:
+        return 0
+
+    existing = {r[0] for r in spark.sql(
+        f"SELECT DISTINCT fiscal_date FROM {INCOME_TABLE} "
+        f"WHERE symbol='{ticker}' AND frequency='annual'"
+    ).collect()}
+    if existing:
+        df = df[~df["fiscal_date"].isin(existing)]
+    if df.empty:
+        return 0
+    write_income_to_iceberg(df)
+    return len(df)
+
 def write_cashflow_to_iceberg(df):
     spark = get_spark()
     sdf = (
@@ -1155,6 +1198,13 @@ def main():
                     n = write_income_to_iceberg(idf) or 0
                     n_ann = int((idf["frequency"] == "annual").sum())
                     parts.append(f"income+{n}({n_ann} annual)")
+                try:
+                    n_edgar = backfill_income_edgar(ticker) or 0
+                    if n_edgar:
+                        parts.append(f"edgar+{n_edgar}")
+                except Exception as e:
+                    print(f"[{i}/{total}] EARNING {ticker} EDGAR backfill failed: {e}",
+                          file=sys.stderr, flush=True)
                 eef = fetch_eps_estimates(ticker)
                 if eef is not None and not eef.empty:
                     n = write_eps_estimates_to_iceberg(eef) or 0

@@ -484,6 +484,12 @@ python scripts/edgar_income.py AAPL --max-year 2020
 python scripts/edgar_income.py AAPL --update
 ```
 
+The `--earnings` flag of `scraper.py` now also runs the EDGAR backfill
+automatically for each ticker, so `income_statements` always carries the full
+history — no separate step needed. It is idempotent (inserts only missing
+annual periods) and skips the EDGAR fetch entirely for symbols that already
+have long history (oldest annual period > 8 years ago).
+
 ### Annual EPS growth (split-adjusted)
 
 EDGAR/yfinance restate historical EPS on mixed split bases (some years pre-split,
