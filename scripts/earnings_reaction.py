@@ -32,6 +32,10 @@ if has_local:
             surprise_pct,
             market_session
         FROM read_parquet('{earnings_parquet}')
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY CAST(report_date AS DATE)
+            ORDER BY (eps_actual IS NULL), (eps_estimate IS NULL), report_date DESC
+        ) = 1
         ORDER BY report_date DESC
         LIMIT {limit + 5}
     """)
