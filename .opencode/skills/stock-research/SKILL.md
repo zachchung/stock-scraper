@@ -55,39 +55,33 @@ section.
 
 ## Report format
 
-Present the output to the user as a Markdown table, mirroring the script's
-sections. **The annual EPS table must include EVERY fiscal year the script
-prints** — AAPL/MSFT/MU/GOOGL have 13–19 years after the EDGAR backfill. Do
-NOT truncate it to the last 5 years. The example below is abbreviated for
-illustration only.
+Present the output to the user as **transposed Markdown tables: metrics as
+columns, the stock symbol as rows** (mirroring the script's sections). Do
+NOT use a `Metric | Value` two-column layout. The example below is
+abbreviated for illustration only.
 
 ```bash
 .venv/bin/python scripts/stock_research.py V
 ```
 
-| Metric | Value |
-|---|---|
-| Analyst upside | **+15.2%** (mean PT $416.20, 37 analysts, Strong Buy) |
-| % down from ATH | **-3.8%** (ATH $375.51; 52wk hi $373.97 / lo $293.89) |
-| TTM P/E | **30.9x** (Fwd P/E 24.1x) |
-| Market cap | **$674.6B** |
-| Net profit margin | **50.8%** |
-| Return on equity | 61.2% |
+| Stock | Analyst upside | % down from ATH | TTM P/E | Market cap | Net profit margin | Return on equity |
+|---|---|---|---|---|---|---|
+| V | **+15.2%** (mean PT $416.20, 37 analysts, Strong Buy) | **-3.8%** (ATH $375.51; 52wk hi $373.97 / lo $293.89) | **30.9x** (Fwd P/E 24.1x) | **$674.6B** | **50.8%** | 61.2% |
 
-Annual diluted EPS (fiscal year) — **reproduce ALL rows the script prints**,
-oldest to newest. This example is abbreviated; V only has these 4 years
-locally:
+Annual diluted EPS (fiscal year) — **reproduce ALL fiscal years the script
+prints as columns**, oldest to newest, with EPS and YoY as rows. This example
+is abbreviated; V only has these 4 years locally:
 
-| FY | EPS | YoY |
-|---|---|---|
-| FY2022 | $7.00 | — |
-| FY2023 | $8.28 | +18.3% |
-| FY2024 | $9.73 | +17.5% |
-| FY2025 | $10.20 | +4.8% |
+| Metric | FY2022 | FY2023 | FY2024 | FY2025 |
+|---|---|---|---|---|
+| EPS | $7.00 | $8.28 | $9.73 | $10.20 |
+| YoY | — | +18.3% | +17.5% | +4.8% |
 
-For a ticker with full backfilled history, list every year the script
-returns — e.g. AAPL from FY2007 ($0.14) through FY2025 ($7.46), each with its
-YoY % (the oldest year has no YoY). 5-yr CAGR ≈ **+7.4%** for AAPL.
+For a ticker with full backfilled history, include every year the script
+returns as a column — e.g. AAPL from FY2007 ($0.14) through FY2025 ($7.46),
+each with its YoY % (the oldest year has no YoY). 5-yr CAGR ≈ **+7.4%** for
+AAPL. Note: MA has 19 fiscal years (FY2007–FY2025) after the EDGAR backfill —
+never truncate.
 
 ## EPS bar chart (ALWAYS include)
 
