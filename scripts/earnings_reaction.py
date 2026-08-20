@@ -6,7 +6,7 @@ import yfinance as yf
 from datetime import datetime
 
 symbol = sys.argv[1].upper() if len(sys.argv) > 1 else "AAPL"
-limit = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 10
+limit = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 20
 
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 con = duckdb.connect()
@@ -216,12 +216,16 @@ print(header)
 print("-" * 91)
 
 pos = neg = 0
+pos10 = neg10 = 0
 max_up, max_down = -999.99, 999.99
-for r in res:
+for i, r in enumerate(res):
     do_pct = r[6] if r[6] is not None else 0.0
     dc_pct = r[7] if r[7] is not None else 0.0
     if dc_pct > 0: pos += 1
     else: neg += 1
+    if i < 10:
+        if dc_pct > 0: pos10 += 1
+        else: neg10 += 1
     max_up = max(max_up, dc_pct)
     max_down = min(max_down, dc_pct)
     est = f'{r[3]:.2f}' if r[3] else 'N/A'
@@ -235,7 +239,8 @@ for r in res:
     print(f"{ed_dt.strftime('%m/%d/%Y'):<14} {r[1]:<13} {rd_dt.strftime('%m/%d/%Y'):<14} {est:<8} {act:<8} {surp:<7} {do_str:<9} {dc_str:<9} {d5:<9}")
 
 print("-" * 91)
-print(f"Positive reactions: {pos}  |  Negative reactions: {neg}")
+print(f"Last {min(10, len(res))}: Positive reactions: {pos10}  |  Negative reactions: {neg10}")
+print(f"Last {len(res)}: Positive reactions: {pos}  |  Negative reactions: {neg}")
 print(f"Max up move: {max_up:+.2f}%  |  Max down move: {max_down:+.2f}%")
 
 con.execute("DROP TABLE earnings_dates")

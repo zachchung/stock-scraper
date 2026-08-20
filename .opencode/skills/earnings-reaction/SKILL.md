@@ -47,4 +47,4 @@ The `scripts/earnings_reaction.py` script has the full implementation:
 ```
 
 - `<SYMBOL>` — ticker (e.g., JPM, MSFT, AAPL, GOOGL)
-- `[N]` — number of past earnings to show (default 10)
+- `[N]` — number of past earnings to show (default 20)
