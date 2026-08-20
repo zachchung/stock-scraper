@@ -40,18 +40,22 @@ stocks.duckdb
 ALWAYS run with `--chart` so the bar chart is produced:
 
 ```bash
-.venv/bin/python scripts/stock_research.py <SYMBOL> --chart
+.venv/bin/python scripts/stock_research.py <SYMBOL> [<SYMBOL2> ...] [--chart]
 ```
 
-- `<SYMBOL>` — ticker (e.g. `V`, `AAPL`, `DIS`, `META`), optional, defaults to `V`.
-- `--chart` — required; renders the annual EPS history as a terminal bar
-  chart (same chart as `scripts/eps_growth.py --chart`).
+- `<SYMBOL>` — ticker(s) (e.g. `V`, `AAPL`, `DIS`, `META`), optional, defaults
+  to `V`. Pass multiple tickers to get one combined metrics table (one row per
+  symbol) plus a separate EPS table + chart for each symbol.
+- `--chart` — required; renders each symbol's annual EPS history as a terminal
+  bar chart (same chart as `scripts/eps_growth.py --chart`).
 
 The script prints a snapshot with: current price/date, market cap, TTM &
 forward P/E, net profit margin, ROE, analyst target + upside %, % down from
 ATH, 52wk high/low, the full annual EPS history (every available fiscal year
 with YoY % and a last-5-yr CAGR line), the EPS bar chart, and a valuation
-section.
+section. The script outputs plain **key-value lines** (readable in a
+terminal). The transposed Markdown tables in "Report format" below are ONLY
+for the agent-written report, never for the script's own stdout.
 
 ## Report format
 
@@ -82,6 +86,13 @@ returns as a column — e.g. AAPL from FY2007 ($0.14) through FY2025 ($7.46),
 each with its YoY % (the oldest year has no YoY). 5-yr CAGR ≈ **+7.4%** for
 AAPL. Note: MA has 19 fiscal years (FY2007–FY2025) after the EDGAR backfill —
 never truncate.
+
+With **multiple symbols**, emit a SINGLE metrics table with one row per
+symbol, and a SINGLE combined EPS table with one row per company — columns are
+the union of all fiscal years (ascending), cells show `$EPS (YoY%)`, and
+missing years are left as `—` — followed by one bar chart per symbol in the
+order given. Example for 2 symbols: one 2-row metrics table + one 2-row EPS
+table + 2 charts. Do not emit a separate EPS table per symbol.
 
 ## EPS bar chart (ALWAYS include)
 

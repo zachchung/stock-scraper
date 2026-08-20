@@ -7,12 +7,12 @@ import pandas as pd
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(BASE, "stocks.duckdb")
 
-parser = argparse.ArgumentParser(description="Single-stock research snapshot.")
-parser.add_argument("symbol", nargs="?", default="V", help="Ticker (e.g. AAPL)")
+parser = argparse.ArgumentParser(description="Stock research snapshot(s).")
+parser.add_argument("symbols", nargs="+", default=["V"], help="Ticker(s) (e.g. AAPL or META AAPL MSFT)")
 parser.add_argument("--chart", action="store_true",
-                    help="Also draw a terminal bar chart of annual EPS")
+                    help="Also draw a terminal bar chart of annual EPS per symbol")
 args = parser.parse_args()
-symbol = args.symbol.upper()
+symbols = [s.upper() for s in args.symbols]
 
 try:
     import duckdb
@@ -30,7 +30,7 @@ except Exception:
 PARQUET_DIRS = {"ohlcv": "ohlcv_daily"}
 
 
-def tbl(name, cols, cond=None):
+def tbl(symbol, name, cols, cond=None):
     if use_parquet:
         path = os.path.join(BASE, "data", "stocks", PARQUET_DIRS.get(name, name), "data", f"symbol={symbol}", "*.parquet")
         opts = "union_by_name=true" if name == "ohlcv" else None
@@ -46,122 +46,144 @@ def q(sql):
         return []
 
 
-rows = q(f"{tbl('ohlcv', 'date, close')} ORDER BY date DESC LIMIT 1")
-if not rows:
-    print(f"No price data found for {symbol}")
-    sys.exit(1)
-price, px_date = rows[0][1], rows[0][0]
-
-fund = q(f"{tbl('fundamentals_snapshot', 'market_cap, fifty_two_week_high, fifty_two_week_low, all_time_high, all_time_low, profit_margin, trailing_pe, forward_pe, return_on_equity, eps_ttm')} ORDER BY fetched_at DESC LIMIT 1")
-fund = fund[0] if fund else None
-
-analyst = q(f"{tbl('analyst_targets', 'target_mean, target_high, target_low, recommendation_key, num_analysts')} ORDER BY fetched_at DESC LIMIT 1")
-analyst = analyst[0] if analyst else None
-
-annual_cond = "frequency='annual'"
-eps_rows = q(f"{tbl('income_statements', 'fiscal_date, diluted_eps, total_revenue, net_income', cond=annual_cond)} ORDER BY fiscal_date ASC")
-split_cond = "action_type='split' AND split_factor > 1"
-split_rows = q(f"{tbl('corporate_actions', 'date, split_factor', cond=split_cond)} ORDER BY date")
-
 import math
 import split_adjust
 
-# EDGAR/yfinance restate historical EPS on mixed split bases (some years pre-split,
-# some post-split). Normalize every year to the current basis via implied shares.
-dates = [r[0] for r in eps_rows]
-eps = [r[1] for r in eps_rows]
-ni = [r[3] for r in eps_rows]
-split_factors = [r[1] for r in split_rows if r[1] and r[1] > 1]
-eps_adj = split_adjust.adjusted_eps(dates, eps, ni, split_factors)
 
-eps_map = {}
-for d, e in zip(dates, eps_adj):
-    if e is not None and not (isinstance(e, float) and math.isnan(e)):
-        eps_map[d.year] = (d, e)
-if len(eps_map) < 5:
-    try:
-        import yfinance as yf
-        iss = yf.Ticker(symbol).income_stmt
-        if "Diluted EPS" in iss.index:
-            for col in iss.columns:
-                v = iss.loc["Diluted EPS", col]
-                try:
-                    v = float(v)
-                except (TypeError, ValueError):
-                    continue
-                if v is not None and not math.isnan(v):
-                    eps_map.setdefault(col.year, (col, v))
-    except Exception:
-        pass
+def collect(symbol):
+    rows = q(f"{tbl(symbol, 'ohlcv', 'date, close')} ORDER BY date DESC LIMIT 1")
+    if not rows:
+        return None
+    price, px_date = rows[0][1], rows[0][0]
 
-print(f"===== {symbol} - Stock Research Snapshot =====")
-print(f"As of {px_date}  |  Price ${price:.2f}")
-print()
+    fund = q(f"{tbl(symbol, 'fundamentals_snapshot', 'market_cap, fifty_two_week_high, fifty_two_week_low, all_time_high, all_time_low, profit_margin, trailing_pe, forward_pe, return_on_equity, eps_ttm')} ORDER BY fetched_at DESC LIMIT 1")
+    fund = fund[0] if fund else None
 
-if fund:
-    mcap, fhi, flo, ath, alo, margin, tpe, fpe, roe, eps_ttm = fund
-    print("Valuation")
-    print(f"  Market cap        ${mcap/1e9:,.1f}B")
-    if eps_ttm:
-        print(f"  TTM P/E           {price/eps_ttm:.1f}x" + (f"   (reported {tpe:.1f}x)" if tpe else ""))
-    elif tpe:
-        print(f"  TTM P/E           {tpe:.1f}x")
-    if fpe:
-        print(f"  Forward P/E       {fpe:.1f}x")
-    print(f"  Net profit margin {margin*100:.1f}%")
-    if roe:
-        print(f"  Return on equity  {roe*100:.1f}%")
-else:
-    print("Valuation: fundamentals_snapshot data unavailable")
+    analyst = q(f"{tbl(symbol, 'analyst_targets', 'target_mean, target_high, target_low, recommendation_key, num_analysts')} ORDER BY fetched_at DESC LIMIT 1")
+    analyst = analyst[0] if analyst else None
 
-print()
-if analyst:
-    tmean, thigh, tlow, rec, n = analyst
-    if tmean:
-        print(f"Analyst targets ({n} analysts, {rec})")
-        print(f"  Mean target       ${tmean:.2f}   upside {((tmean/price)-1)*100:+.1f}%")
-        if thigh and tlow:
-            print(f"  High / Low        ${thigh:.2f} / ${tlow:.2f}")
-else:
-    print("Analyst targets: no data available")
+    annual_cond = "frequency='annual'"
+    eps_rows = q(f"{tbl(symbol, 'income_statements', 'fiscal_date, diluted_eps, total_revenue, net_income', cond=annual_cond)} ORDER BY fiscal_date ASC")
+    split_cond = "action_type='split' AND split_factor > 1"
+    split_rows = q(f"{tbl(symbol, 'corporate_actions', 'date, split_factor', cond=split_cond)} ORDER BY date")
 
-print()
-if fund and ath:
-    print("Price position")
-    print(f"  % down from ATH   {((price/ath)-1)*100:+.1f}%   (ATH ${ath:.2f})")
-    if fhi and flo:
-        print(f"  52wk high / low   ${fhi:.2f} / ${flo:.2f}")
-else:
-    print("Price position: all-time-high data unavailable")
+    # EDGAR/yfinance restate historical EPS on mixed split bases (some years pre-split,
+    # some post-split). Normalize every year to the current basis via implied shares.
+    dates = [r[0] for r in eps_rows]
+    eps = [r[1] for r in eps_rows]
+    ni = [r[3] for r in eps_rows]
+    split_factors = [r[1] for r in split_rows if r[1] and r[1] > 1]
+    eps_adj = split_adjust.adjusted_eps(dates, eps, ni, split_factors)
 
-years = sorted(eps_map.keys(), reverse=True)
-if years:
+    eps_map = {}
+    for d, e in zip(dates, eps_adj):
+        if e is not None and not (isinstance(e, float) and math.isnan(e)):
+            eps_map[d.year] = (d, e)
+    if len(eps_map) < 5:
+        try:
+            import yfinance as yf
+            iss = yf.Ticker(symbol).income_stmt
+            if "Diluted EPS" in iss.index:
+                for col in iss.columns:
+                    v = iss.loc["Diluted EPS", col]
+                    try:
+                        v = float(v)
+                    except (TypeError, ValueError):
+                        continue
+                    if v is not None and not math.isnan(v):
+                        eps_map.setdefault(col.year, (col, v))
+        except Exception:
+            pass
+
+    return {"price": price, "px_date": px_date, "fund": fund,
+            "analyst": analyst, "eps_map": eps_map}
+
+
+data = {s: collect(s) for s in symbols}
+missing = [s for s, d in data.items() if d is None]
+if missing:
+    print(f"No price data found for {', '.join(missing)}")
+    sys.exit(1)
+
+
+def print_report(symbol, d):
+    price, px_date = d["price"], d["px_date"]
+    fund, analyst = d["fund"], d["analyst"]
+
+    print(f"===== {symbol} - Stock Research Snapshot =====")
+    print(f"As of {px_date}  |  Price ${price:.2f}")
     print()
-    print("Annual EPS (fiscal year)")
-    for i, y in enumerate(years):
-        d, e = eps_map[y]
-        label = f"FY{d.year % 100:02d} ({d.strftime('%m-%d')} end)"
-        if i < len(years) - 1:
-            older = eps_map[years[i + 1]][1]
-            yoy = (e / older - 1) * 100
-            print(f"  {label:<22} ${e:>8.2f}   {yoy:+.1f}%")
-        else:
-            print(f"  {label:<22} ${e:>8.2f}")
-    tail = years[:5]
-    if len(tail) >= 3:
-        start = eps_map[tail[-1]][1]
-        end = eps_map[tail[0]][1]
-        cagr = ((end / start) ** (1 / (len(tail) - 1)) - 1) * 100
-        print(f"  {'CAGR (last ' + str(len(tail)) + ' yrs)':<22} {cagr:+.1f}%")
-    if args.chart:
-        asc = sorted(eps_map.keys())
-        chart_rows = []
-        for i, y in enumerate(asc):
-            d, e = eps_map[y]
-            yoy = ((e / eps_map[asc[i - 1]][1] - 1) * 100) if i > 0 else None
-            chart_rows.append({"fiscal_date": d, "eps_adj": e, "yoy_pct": yoy})
+
+    if fund:
+        mcap, fhi, flo, ath, alo, margin, tpe, fpe, roe, eps_ttm = fund
+        print("Valuation")
+        print(f"  Market cap        ${mcap/1e9:,.1f}B")
+        if eps_ttm:
+            print(f"  TTM P/E           {price/eps_ttm:.1f}x" + (f"   (reported {tpe:.1f}x)" if tpe else ""))
+        elif tpe:
+            print(f"  TTM P/E           {tpe:.1f}x")
+        if fpe:
+            print(f"  Forward P/E       {fpe:.1f}x")
+        print(f"  Net profit margin {margin*100:.1f}%")
+        if roe:
+            print(f"  Return on equity  {roe*100:.1f}%")
+    else:
+        print("Valuation: fundamentals_snapshot data unavailable")
+
+    print()
+    if analyst:
+        tmean, thigh, tlow, rec, n = analyst
+        if tmean:
+            print(f"Analyst targets ({n} analysts, {rec})")
+            print(f"  Mean target       ${tmean:.2f}   upside {((tmean/price)-1)*100:+.1f}%")
+            if thigh and tlow:
+                print(f"  High / Low        ${thigh:.2f} / ${tlow:.2f}")
+    else:
+        print("Analyst targets: no data available")
+
+    print()
+    if fund and ath:
+        print("Price position")
+        print(f"  % down from ATH   {((price/ath)-1)*100:+.1f}%   (ATH ${ath:.2f})")
+        if fhi and flo:
+            print(f"  52wk high / low   ${fhi:.2f} / ${flo:.2f}")
+    else:
+        print("Price position: all-time-high data unavailable")
+
+    eps_map = d["eps_map"]
+    years = sorted(eps_map.keys(), reverse=True)
+    if years:
         print()
-        split_adjust.print_bar_chart(pd.DataFrame(chart_rows))
-else:
+        print("Annual EPS (fiscal year)")
+        for i, y in enumerate(years):
+            fdate, e = eps_map[y]
+            label = f"FY{fdate.year % 100:02d} ({fdate.strftime('%m-%d')} end)"
+            if i < len(years) - 1:
+                older = eps_map[years[i + 1]][1]
+                yoy = (e / older - 1) * 100
+                print(f"  {label:<22} ${e:>8.2f}   {yoy:+.1f}%")
+            else:
+                print(f"  {label:<22} ${e:>8.2f}")
+        tail = years[:5]
+        if len(tail) >= 3:
+            start = eps_map[tail[-1]][1]
+            end = eps_map[tail[0]][1]
+            cagr = ((end / start) ** (1 / (len(tail) - 1)) - 1) * 100
+            print(f"  {'CAGR (last ' + str(len(tail)) + ' yrs)':<22} {cagr:+.1f}%")
+        if args.chart:
+            asc = sorted(eps_map.keys())
+            chart_rows = []
+            for i, y in enumerate(asc):
+                fdate, e = eps_map[y]
+                yoy = ((e / eps_map[asc[i - 1]][1] - 1) * 100) if i > 0 else None
+                chart_rows.append({"fiscal_date": fdate, "eps_adj": e, "yoy_pct": yoy})
+            print()
+            split_adjust.print_bar_chart(pd.DataFrame(chart_rows))
+    else:
+        print()
+        print("Annual EPS: no annual income statement data available")
     print()
-    print("Annual EPS: no annual income statement data available")
+
+
+for s in symbols:
+    print_report(s, data[s])
